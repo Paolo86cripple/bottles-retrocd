@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — GPU selector
+
+- added dynamic GPU detection with stable PCI-address selection instead of `cardX` ordering;
+- prefer the integrated GPU on first use and persist the selected PCI address in `~/.config/bottles-retro-cd/config.toml` with mode `0600`;
+- apply the selected GPU per Bottles launch using Mesa `DRI_PRIME`;
+- added a Vulkan verification action that checks vendor/device identity inside Bubblejail;
+- strict GPU isolation masks Bubblejail's broad `/dev/dri` view and re-exposes only the selected GPU's `cardX` and `renderD*` nodes;
+- verified on the target dual-AMD system with both the Ryzen 7 9800X3D iGPU and Radeon RX 9070 XT, including successful Bottles launch.
+
 ## 0.4.0-rc2
 
 - fixed false failure on CDEmu `/dev/srX` when the block-layer `ro` flag is 0;

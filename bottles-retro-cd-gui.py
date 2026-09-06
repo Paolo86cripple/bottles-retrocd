@@ -17,6 +17,14 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 from cdemu_backend import CDEmuBackend, DeviceState
+from gpu_backend import (
+    GPUInfo,
+    bubblewrap_gpu_args,
+    detect_gpus,
+    gpu_by_pci,
+    parse_vulkan_summary,
+    preferred_gpu,
+)
 from sandbox_backend import (
     DATA_ROOT,
     EGLLIBRARY_ROOT,
@@ -25,6 +33,7 @@ from sandbox_backend import (
     SandboxBackend,
     run_cmd,
 )
+from settings_backend import load_settings, save_settings
 
 APP_ID = "org.local.BottlesRetroCD"
 APP_NAME = "Bottles Retro CD"
@@ -46,8 +55,11 @@ class Window(Gtk.ApplicationWindow):
         self.sandbox = SandboxBackend(INSTANCE)
         self.devices: list[DeviceState] = []
         self.images: list[Path] = []
+        self.gpus: list[GPUInfo] = []
+        self.settings = load_settings()
         self.busy = False
         self._ui_thread_id = threading.get_ident()
+        self._refreshing_gpus = False
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         root.set_margin_top(12)
@@ -176,6 +188,35 @@ class Window(Gtk.ApplicationWindow):
     def build_sandbox_tab(self):
         page = self.page_box()
         self.add_tab(page, "Sandbox")
+
+        gframe = Gtk.Frame(label="GPU per questo avvio")
+        page.append(gframe)
+        gbox = self.frame_box(gframe)
+        grow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        gbox.append(grow)
+        self.gpu_model = Gtk.StringList.new([])
+        self.gpu_drop = Gtk.DropDown(model=self.gpu_model, hexpand=True)
+        self.gpu_drop.connect("notify::selected", self.gpu_changed)
+        grow.append(self.gpu_drop)
+        self.gpu_refresh_btn = Gtk.Button(label="Aggiorna GPU")
+        self.gpu_refresh_btn.connect("clicked", lambda *_: self.refresh_gpus())
+        grow.append(self.gpu_refresh_btn)
+        self.gpu_test_btn = Gtk.Button(label="Test Vulkan")
+        self.gpu_test_btn.connect("clicked", lambda *_: self.background(self.test_selected_gpu, report=True))
+        grow.append(self.gpu_test_btn)
+        self.gpu_status = Gtk.Label(label="GPU: rilevamento non eseguito", xalign=0, wrap=True)
+        gbox.append(self.gpu_status)
+        gpu_note = Gtk.Label(
+            label=(
+                "La selezione usa l'indirizzo PCI stabile, non card1/card2. "
+                "L'iGPU è preferita al primo avvio; la scelta viene salvata in config.toml. "
+                "DRI_PRIME seleziona la GPU per OpenGL/Vulkan e Vulkan viene limitato alla GPU scelta."
+            ),
+            xalign=0,
+            wrap=True,
+        )
+        gpu_note.add_css_class("dim-label")
+        gbox.append(gpu_note)
 
         frame = Gtk.Frame(label="Permessi per questo avvio")
         page.append(frame)
@@ -395,6 +436,7 @@ class Window(Gtk.ApplicationWindow):
             self.global_status.set_text("CDEmu non connesso")
             self.set_message(f"Connessione CDEmu fallita: {exc}", True)
         self.reload_whitelist()
+        self.refresh_gpus()
         self.refresh_all()
         return False
 
@@ -433,9 +475,162 @@ class Window(Gtk.ApplicationWindow):
         self.busy = busy
         for widget in (
             self.load_btn, self.eject_btn, self.launch_btn,
+            self.gpu_refresh_btn, self.gpu_test_btn,
             self.test_cdemu_btn, self.test_sandbox_btn, self.test_integration_btn, self.test_all_btn,
         ):
             widget.set_sensitive(not busy)
+
+    def selected_gpu(self) -> GPUInfo | None:
+        if not self.gpus:
+            return None
+        idx = self.ui_get(self.gpu_drop.get_selected)
+        if idx == Gtk.INVALID_LIST_POSITION or idx >= len(self.gpus):
+            return preferred_gpu(self.gpus)
+        return self.gpus[idx]
+
+    def refresh_gpu_status(self):
+        if not self.gpus:
+            self.gpu_status.set_text("GPU: nessuna GPU DRM con render node rilevata")
+            return False
+        idx = self.gpu_drop.get_selected()
+        if idx == Gtk.INVALID_LIST_POSITION or idx >= len(self.gpus):
+            gpu = preferred_gpu(self.gpus)
+        else:
+            gpu = self.gpus[idx]
+        if gpu is None:
+            self.gpu_status.set_text("GPU: selezione non disponibile")
+            return False
+        vram = f" · VRAM {gpu.vram_bytes / 1024**3:.1f} GiB" if gpu.vram_bytes is not None else ""
+        driver = f" · driver {gpu.driver}" if gpu.driver else ""
+        self.gpu_status.set_text(
+            f"Selezionata: {gpu.kind_label} · {gpu.name} · PCI {gpu.pci_address} · "
+            f"{Path(gpu.render_node).name or 'render node —'}{vram}{driver}"
+        )
+        return False
+
+    def refresh_gpus(self):
+        previous = ""
+        if self.gpus and hasattr(self, "gpu_drop"):
+            idx = self.gpu_drop.get_selected()
+            if idx != Gtk.INVALID_LIST_POSITION and idx < len(self.gpus):
+                previous = self.gpus[idx].pci_address
+        saved = str(self.settings.get("gpu_pci", ""))
+
+        self._refreshing_gpus = True
+        try:
+            self.gpus = detect_gpus()
+            self.gpu_model.splice(0, self.gpu_model.get_n_items(), [gpu.label for gpu in self.gpus])
+            chosen = gpu_by_pci(self.gpus, previous or saved) or preferred_gpu(self.gpus)
+            if chosen is not None:
+                self.gpu_drop.set_selected(self.gpus.index(chosen))
+                if saved != chosen.pci_address:
+                    self.settings["gpu_pci"] = chosen.pci_address
+                    save_settings(self.settings)
+            elif self.gpu_model.get_n_items() == 0:
+                self.settings["gpu_pci"] = ""
+        finally:
+            self._refreshing_gpus = False
+        self.refresh_gpu_status()
+        return False
+
+    def gpu_changed(self, *_):
+        if self._refreshing_gpus:
+            return
+        idx = self.gpu_drop.get_selected()
+        if idx != Gtk.INVALID_LIST_POSITION and idx < len(self.gpus):
+            self.settings["gpu_pci"] = self.gpus[idx].pci_address
+            save_settings(self.settings)
+        self.refresh_gpu_status()
+
+    def test_selected_gpu(self):
+        self.sandbox.ensure_runtime_args_supported()
+        if self.sandbox.running():
+            raise RuntimeError("Chiudi Bottles/Bubblejail prima del test GPU.")
+        gpu = self.selected_gpu()
+        if gpu is None:
+            raise RuntimeError("Nessuna GPU selezionabile rilevata.")
+
+        args = ["bubblejail", "run"] + bubblewrap_gpu_args(gpu) + ["--debug-shell", INSTANCE]
+        selected_nodes = [node for node in (gpu.card_node, gpu.render_node) if node]
+        hidden_nodes = [
+            node
+            for other in self.gpus
+            if other.pci_address != gpu.pci_address
+            for node in (other.card_node, other.render_node)
+            if node
+        ]
+        checks = []
+        for node in selected_nodes:
+            checks.append(
+                f"if [ -c {shlex.quote(node)} ]; then "
+                f"printf 'GPU_SELECTED_NODE_OK=%s\\n' {shlex.quote(node)}; "
+                f"else printf 'GPU_SELECTED_NODE_MISSING=%s\\n' {shlex.quote(node)}; fi"
+            )
+        for node in hidden_nodes:
+            checks.append(
+                f"if [ -e {shlex.quote(node)} ]; then "
+                f"printf 'GPU_HIDDEN_NODE_VISIBLE=%s\\n' {shlex.quote(node)}; "
+                f"else printf 'GPU_HIDDEN_NODE_OK=%s\\n' {shlex.quote(node)}; fi"
+            )
+
+        script = """
+set +e
+printf 'GPU_DRI_PRIME=%s\\n' "$DRI_PRIME"
+printf 'GPU_DRI_LIST_BEGIN\\n'
+ls -la /dev/dri 2>&1
+printf 'GPU_DRI_LIST_END\\n'
+""" + "\n".join(checks) + """
+if ! command -v vulkaninfo >/dev/null 2>&1; then
+    printf 'GPU_VULKANINFO_MISSING=1\\n'
+    exit 0
+fi
+vulkaninfo --summary 2>&1
+exit 0
+"""
+        proc = run_cmd(args, input_text=script, timeout=40)
+        if "GPU_VULKANINFO_MISSING=1" in proc.stdout:
+            raise RuntimeError("vulkaninfo non è disponibile dentro Bubblejail.")
+        missing_selected = [
+            line.split("=", 1)[1]
+            for line in proc.stdout.splitlines()
+            if line.startswith("GPU_SELECTED_NODE_MISSING=")
+        ]
+        visible_hidden = [
+            line.split("=", 1)[1]
+            for line in proc.stdout.splitlines()
+            if line.startswith("GPU_HIDDEN_NODE_VISIBLE=")
+        ]
+        if missing_selected:
+            raise RuntimeError(
+                "Nodi DRM selezionati mancanti nella jail: " + ", ".join(missing_selected)
+            )
+        if visible_hidden:
+            raise RuntimeError(
+                "Isolamento GPU fallito; nodi della GPU non selezionata ancora visibili: "
+                + ", ".join(visible_hidden)
+            )
+        devices = parse_vulkan_summary(proc.stdout)
+        if len(devices) != 1:
+            raise RuntimeError(
+                f"Il test Vulkan attende una sola GPU esposta, trovate {len(devices)}.\n{proc.stdout[-4000:]}"
+            )
+        actual = devices[0]
+        vendor = actual.get("vendorID", "").lower().removeprefix("0x").zfill(4)
+        device = actual.get("deviceID", "").lower().removeprefix("0x").zfill(4)
+        if vendor != gpu.vendor_id.zfill(4) or device != gpu.device_id.zfill(4):
+            raise RuntimeError(
+                f"GPU Vulkan diversa da quella richiesta: attesa {gpu.vendor_id}:{gpu.device_id}, "
+                f"ottenuta {vendor}:{device} ({actual.get('deviceName', 'nome sconosciuto')})."
+            )
+        return "\n".join([
+            f"[INFO] GPU richiesta: {gpu.kind_label} · {gpu.name} · PCI {gpu.pci_address}",
+            f"[PASS] DRI_PRIME: {gpu.mesa_dri_prime}",
+            f"[PASS] nodi DRM selezionati visibili: {', '.join(selected_nodes)}",
+            f"[PASS] nodi DRM altre GPU assenti: {len(hidden_nodes)}",
+            "[PASS] Vulkan espone una sola GPU",
+            f"[PASS] PCI vendor/device: {vendor}:{device}",
+            f"[INFO] Vulkan deviceName: {actual.get('deviceName', '—')}",
+        ])
 
     def background(self, fn, report: bool = False):
         if self.busy:
@@ -888,8 +1083,10 @@ class Window(Gtk.ApplicationWindow):
         expose_mount: bool,
         raw_on: bool,
         sg_on: bool,
+        gpu: GPUInfo | None,
     ) -> list[str]:
         args = ["/usr/bin/bubblejail", "run"]
+        args += bubblewrap_gpu_args(gpu)
         if network_on:
             args += ["--debug-bwrap-args", "share-net"]
             resolv = Path("/etc/resolv.conf")
@@ -960,8 +1157,10 @@ class Window(Gtk.ApplicationWindow):
                     raise RuntimeError(f"Il mount {target} è RW.")
                 mount = target if ro else None
 
+        gpu = self.selected_gpu()
         args = self.runtime_bubblejail_args(
-            d, mount, network_on=network_on, expose_mount=expose_mount, raw_on=raw_on, sg_on=sg_on
+            d, mount, network_on=network_on, expose_mount=expose_mount, raw_on=raw_on,
+            sg_on=sg_on, gpu=gpu,
         )
 
         log_dir = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "bottles-retro-cd"
@@ -986,8 +1185,9 @@ class Window(Gtk.ApplicationWindow):
             if d is not None
             else "nessun CD"
         )
+        gpu_state = gpu.label if gpu is not None else "Mesa default"
         return (
-            f"Bottles avviato · rete {'ON' if network_on else 'OFF'} · {cd_state} · "
+            f"Bottles avviato · GPU {gpu_state} · rete {'ON' if network_on else 'OFF'} · {cd_state} · "
             f"log={log_path}"
         )
 

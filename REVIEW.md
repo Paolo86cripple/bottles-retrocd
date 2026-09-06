@@ -33,10 +33,20 @@ The architecture and runtime paths are suitable for this release candidate. The 
 - Diagnostic log can be copied from the GUI.
 - Unit tests cover whitelist update, backup/restore and unsafe path rejection.
 
+## GPU selector feature review
+
+- GPU identity is persisted by PCI address rather than unstable `cardX` numbering.
+- The integrated GPU is preferred only as a default-selection heuristic; access-control decisions use the explicitly selected GPU object.
+- Mesa selection is applied per launch; the Bubblejail profile is not rewritten for GPU changes.
+- Because Bubblejail 0.10.x `direct_rendering` exposes all of `/dev/dri`, runtime bwrap arguments mask `/dev/dri` with a tmpfs and re-bind only the selected GPU's DRM card/render nodes.
+- The Vulkan test fails closed if selected DRM nodes are missing, non-selected GPU nodes remain visible, more than one Vulkan GPU is exposed, or vendor/device IDs do not match.
+- Real-machine validation passed for both the Ryzen 7 9800X3D integrated GPU and the Radeon RX 9070 XT, and Bottles launches successfully with either selection.
+- Deliberately not hardened further: GPU-related sysfs remains visible. Restricting sysfs was rejected for now to avoid unnecessary Mesa/udev compatibility risk.
+
 ## Static review
 
 - Python syntax/AST: PASS.
-- Unit tests: PASS.
+- Unit tests: PASS (9/9 with GPU/settings coverage).
 - `bash -n run-local.sh`: PASS.
 - No hardcoded `/home/paolo` paths.
 - No `os.system`, `shell=True`, `eval` or dynamic `exec` in the application path.

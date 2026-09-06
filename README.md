@@ -11,6 +11,7 @@ Current version: **0.4.0-rc2**.
 - private HOME for Bottles, runners, DXVK, runtimes and prefixes;
 - explicit persistent filesystem whitelist with separate RW and RO paths;
 - network OFF by default, optionally enabled for one launch only;
+- per-launch GPU selector with integrated-GPU preference, persistent PCI-address selection and strict `/dev/dri` node isolation;
 - CDEmu control over D-Bus using the same daemon API model as gCDEmu;
 - UDisks2 mount verification in read-only mode;
 - optional raw optical-device exposure for Wine, accepted only when it matches the CDEmu D-Bus mapping and is validated as a Linux SCSI optical block device;
@@ -21,7 +22,7 @@ Current version: **0.4.0-rc2**.
 The interface is split into five tabs:
 
 1. **CDEmu** — drive selection, image load/eject and UDisks2 RO status.
-2. **Sandbox** — per-launch network and optical-device permissions, plus Bottles launch.
+2. **Sandbox** — per-launch GPU, network and optical-device permissions, GPU Vulkan test, plus Bottles launch.
 3. **Whitelist** — persistent Bubblejail `root_share` RO/RW management.
 4. **Advanced** — DPM, transfer-rate, bad-sector and DVD CSS emulation.
 5. **Test** — CDEmu/UDisks2, Bubblejail and end-to-end CD → Bubblejail tests, with copy-log.
@@ -39,6 +40,9 @@ following have been validated on real hardware:
 - dynamic RW/RO whitelist enforcement;
 - non-whitelisted Data paths hidden;
 - network isolation with only loopback;
+- persistent GPU selection by PCI address;
+- strict `/dev/dri` isolation exposing only the selected GPU nodes;
+- Vulkan identity test and successful Bottles launches on both available AMD GPUs;
 - Wayland, XWayland, audio, Vulkan/GPU and dconf;
 - dynamic `/dev/srX` plus `/mnt/cdemu` integration;
 - runner downloaded with temporary network ON persists inside Bubblejail's
