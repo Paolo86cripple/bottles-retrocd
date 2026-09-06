@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.log
+*.pkg.tar.*
+*.src.tar.*
+pkg/
+src/
+.DS_Store
