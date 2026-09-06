@@ -8,7 +8,7 @@ Expected:
 
 - temporary drive created and mapped;
 - image loaded via D-Bus;
-- raw `/dev/srX` reported read-only by the kernel;
+- `/dev/srX` validated as the CDEmu-mapped SCSI optical block device;
 - DPM, transfer-rate, bad-sector and CSS options get/set/get successfully;
 - UDisks2 creates a RO mount;
 - write attempt on the mount is denied;
@@ -32,7 +32,7 @@ Expected:
 Expected:
 
 - temporary CDEmu drive and RO host mount;
-- raw `/dev/srX` is read-only and visible in the jail;
+- raw `/dev/srX` is the validated CDEmu optical device and is visible in the jail;
 - `/mnt/cdemu` is visible and not writable;
 - unrelated Data paths stay hidden;
 - cleanup removes the temporary device.
@@ -45,3 +45,7 @@ Expected:
 4. Confirm the runner exists under the private instance HOME, normally:
    `~/.local/share/bubblejail/instances/Bottles/home/.local/share/bottles/runners/`.
 5. Reopen with network OFF and confirm the runner remains available.
+
+### Note on `/sys/class/block/srX/ro`
+
+For CDEmu/VHBA this flag may be `0` even for a normally loaded optical image. It is logged for diagnostics but is not used as the security decision. The mounted filesystem must still be verified read-only, and raw device exposure is optional.

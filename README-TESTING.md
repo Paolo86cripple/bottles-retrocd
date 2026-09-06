@@ -1,4 +1,4 @@
-# Testing 0.4.0-rc1
+# Testing 0.4.0-rc2
 
 This release candidate is intended to be run locally before packaging.
 Nothing in this tree installs files under `/usr`.
@@ -17,12 +17,12 @@ created.
 Run the three tests in the **Test** tab with Bottles fully closed:
 
 1. **CDEmu + UDisks2** — temporary device creation, D-Bus load/unload, advanced
-   CDEmu options, kernel raw-device read-only state, UDisks2 RO mount and denied
+   CDEmu options, CDEmu optical-device identity, UDisks2 RO mount and denied
    write, followed by cleanup.
 2. **Bubblejail** — private HOME, dynamic RO/RW whitelist, hidden unshared Data,
    network isolation, Wayland/XWayland, audio, GPU/Vulkan and dconf.
 3. **CD → Bubblejail** — temporary CDEmu device plus `/mnt/cdemu` RO inside the
-   jail, raw `/dev/srX` only when the kernel reports it read-only, and unrelated
+   jail, raw `/dev/srX` as an explicit compatibility path, while unrelated
    Data paths still hidden.
 
 Use **Copia log** to copy the complete diagnostic output.

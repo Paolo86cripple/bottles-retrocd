@@ -5,6 +5,7 @@ import getpass
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -27,7 +28,7 @@ from sandbox_backend import (
 
 APP_ID = "org.local.BottlesRetroCD"
 APP_NAME = "Bottles Retro CD"
-VERSION = "0.4.0-rc1"
+VERSION = "0.4.0-rc2"
 JAIL_CD_TARGET = "/mnt/cdemu"
 OPTICAL_EXTENSIONS = {
     ".cue", ".iso", ".mds", ".mdf", ".mdx", ".nrg", ".ccd", ".toc",
@@ -194,8 +195,10 @@ class Window(Gtk.ApplicationWindow):
         self.raw_switch = self.switch_row(
             box,
             "Esporre /dev/srX",
-            "Consente a Wine di interrogare il lettore CDEmu come dispositivo ottico.",
-            True,
+            "Compatibilità avanzata: espone solo il block device ottico mappato da CDEmu. "
+            "Il mount filesystem resta comunque obbligatoriamente RO. "
+            "Abilitalo solo per giochi che devono interrogare il lettore fisico.",
+            False,
         )
         self.sg_switch = self.switch_row(
             box,
@@ -664,7 +667,7 @@ class Window(Gtk.ApplicationWindow):
     def copy_test_log(self, *_):
         start, end = self.test_buffer.get_bounds()
         text = self.test_buffer.get_text(start, end, True)
-        self.get_clipboard().set_text(text)
+        self.get_clipboard().set(text)
         self.set_message("Log dei test copiato negli appunti.")
 
     def raw_changed(self, *_):
@@ -776,7 +779,12 @@ class Window(Gtk.ApplicationWindow):
 
     @staticmethod
     def raw_device_read_only(sr_path: str) -> bool | None:
-        """Return the kernel read-only state for a block device, when knowable."""
+        """Return the block-layer RO flag as diagnostics only.
+
+        CDEmu/VHBA optical devices can legitimately report ``0`` here even when
+        a normally loaded image is used as read-only media.  Therefore this value
+        must never be used as the security gate for exposing a CDEmu /dev/srX.
+        """
         if not sr_path:
             return None
         name = Path(sr_path).name
@@ -794,15 +802,34 @@ class Window(Gtk.ApplicationWindow):
                 return value == "1"
         return None
 
-    def wait_raw_device_read_only(self, sr_path: str, timeout: float = 5.0) -> bool | None:
-        deadline = time.monotonic() + timeout
-        last: bool | None = None
-        while time.monotonic() < deadline:
-            last = self.raw_device_read_only(sr_path)
-            if last is True:
-                return True
-            time.sleep(0.2)
-        return last
+    @staticmethod
+    def validate_cdemu_optical_device(sr_path: str) -> str:
+        """Validate that *sr_path* is an actual Linux optical block device.
+
+        The path itself comes from CDEmu's DeviceGetMapping D-Bus method.  This
+        adds local kernel/sysfs validation before Bubblejail is allowed to expose
+        it to Wine.  SCSI peripheral type 5 is CD/DVD-ROM.
+        """
+        if not sr_path:
+            raise RuntimeError("Mapping CDEmu /dev/srX assente.")
+        path = Path(sr_path)
+        name = path.name
+        if path.parent != Path("/dev") or not name.startswith("sr") or not name[2:].isdigit():
+            raise RuntimeError(f"Mapping CDEmu inatteso: {sr_path}")
+        try:
+            st = path.stat()
+        except OSError as exc:
+            raise RuntimeError(f"Device CDEmu non accessibile: {sr_path}: {exc}") from exc
+        if not stat.S_ISBLK(st.st_mode):
+            raise RuntimeError(f"Il mapping CDEmu non è un block device: {sr_path}")
+        scsi_type = Path("/sys/class/block") / name / "device" / "type"
+        try:
+            value = scsi_type.read_text(encoding="ascii").strip()
+        except OSError as exc:
+            raise RuntimeError(f"Impossibile verificare il tipo ottico di {sr_path}: {exc}") from exc
+        if value != "5":
+            raise RuntimeError(f"{sr_path} non è un device ottico SCSI (type={value!r}).")
+        return f"{sr_path} block optical SCSI type=5"
 
     def option_state(self) -> dict[str, bool]:
         return self.ui_get(lambda: {
@@ -878,13 +905,7 @@ class Window(Gtk.ApplicationWindow):
                 "--debug-bwrap-args", "ro-bind", mount, JAIL_CD_TARGET,
             ]
         if d is not None and raw_on and d.sr_path:
-            raw_ro = self.wait_raw_device_read_only(d.sr_path)
-            if raw_ro is not True:
-                state = "RW" if raw_ro is False else "non verificabile"
-                raise RuntimeError(
-                    f"Rifiuto esposizione raw di {d.sr_path}: stato kernel {state}. "
-                    "Per questo profilo il device ottico deve risultare read-only."
-                )
+            self.validate_cdemu_optical_device(d.sr_path)
             args += ["--debug-bwrap-args", "dev-bind", d.sr_path, d.sr_path]
             if sg_on and d.sg_path and Path(d.sg_path).exists():
                 args += ["--debug-bwrap-args", "dev-bind", d.sg_path, d.sg_path]
@@ -993,13 +1014,11 @@ class Window(Gtk.ApplicationWindow):
             lines.append(f"[PASS] DeviceLoad via D-Bus: loaded={loaded} file={files[0] if files else '—'}")
             if shutil.which("udevadm"):
                 run_cmd(["udevadm", "settle", "--timeout=5"], timeout=6)
-            raw_ro = self.wait_raw_device_read_only(sr)
-            if raw_ro is True:
-                lines.append(f"[PASS] device raw kernel read-only: {sr}")
-            elif raw_ro is False:
-                raise RuntimeError(f"Il device raw {sr} risulta RW al kernel")
-            else:
-                raise RuntimeError(f"Stato read-only raw non verificabile per {sr}")
+            raw_desc = self.validate_cdemu_optical_device(sr)
+            lines.append(f"[PASS] device raw CDEmu validato: {raw_desc}")
+            raw_ro = self.raw_device_read_only(sr)
+            state = "RO" if raw_ro is True else "RW" if raw_ro is False else "non verificabile"
+            lines.append(f"[INFO] block-layer ro={state} (diagnostico; non è la policy RO del mount)")
             if shutil.which("lsblk"):
                 pr = run_cmd(["lsblk", "-dn", "-o", "NAME,FSTYPE,LABEL,SIZE", sr], timeout=4)
                 lines.append(f"[INFO] kernel/udev iniziale: {pr.stdout.strip() or 'nessun FSTYPE/LABEL'}")
@@ -1098,10 +1117,11 @@ class Window(Gtk.ApplicationWindow):
             self.cdemu.load(temp, image)
             self.cdemu.wait_loaded(temp, True)
             lines.append(f"[PASS] CDEmu temp #{temp}: {sr} {sg or ''}".rstrip())
-            raw_ro = self.wait_raw_device_read_only(sr)
-            if raw_ro is not True:
-                raise RuntimeError(f"Device raw {sr} non verificato read-only (stato={raw_ro})")
-            lines.append(f"[PASS] device raw kernel read-only: {sr}")
+            raw_desc = self.validate_cdemu_optical_device(sr)
+            lines.append(f"[PASS] device raw CDEmu validato: {raw_desc}")
+            raw_ro = self.raw_device_read_only(sr)
+            state = "RO" if raw_ro is True else "RW" if raw_ro is False else "non verificabile"
+            lines.append(f"[INFO] block-layer ro={state} (diagnostico; mount RO verificato separatamente)")
             if udisks_on:
                 mount = self.ensure_ro_mount(sr)
                 lines.append(f"[PASS] mount host RO: {mount}")

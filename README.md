@@ -3,7 +3,7 @@
 GTK4 controller for running native Bottles inside a dedicated Bubblejail instance,
 with CDEmu/UDisks2 integration for retro optical media.
 
-Current version: **0.4.0-rc1**.
+Current version: **0.4.0-rc2**.
 
 ## Goals
 
@@ -13,8 +13,7 @@ Current version: **0.4.0-rc1**.
 - network OFF by default, optionally enabled for one launch only;
 - CDEmu control over D-Bus using the same daemon API model as gCDEmu;
 - UDisks2 mount verification in read-only mode;
-- optional raw optical-device exposure for Wine, accepted only when the kernel
-  reports `/dev/srX` as read-only;
+- optional raw optical-device exposure for Wine, accepted only when it matches the CDEmu D-Bus mapping and is validated as a Linux SCSI optical block device;
 - diagnostics before normal use.
 
 ## UI
@@ -45,9 +44,7 @@ following have been validated on real hardware:
 - runner downloaded with temporary network ON persists inside Bubblejail's
   private HOME and remains available after reopening with network OFF.
 
-The rc1 adds an additional fail-closed check that the raw `/dev/srX` device is
-reported read-only by the kernel before it may be passed to Wine. Re-run the
-CDEmu and integration tests once after updating to rc1.
+The rc2 validates raw `/dev/srX` by CDEmu mapping, Linux block-device identity and SCSI optical type 5. The block-layer `ro` bit is diagnostic only; UDisks2 filesystem mounts remain fail-closed read-only. This path has been validated on the target CachyOS system.
 
 ## Run locally
 

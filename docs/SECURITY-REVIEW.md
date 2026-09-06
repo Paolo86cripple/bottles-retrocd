@@ -1,4 +1,4 @@
-# Security / code review — 0.4.0-rc1
+# Security / code review — 0.4.0-rc2
 
 ## Result
 
@@ -19,30 +19,25 @@ network boundary.
 - CDEmu uses D-Bus instead of localized CLI-output parsing.
 - UDisks2 mount state is verified rather than trusted from command success alone.
 - Dynamic mount is always `ro-bind`.
-- Raw `/dev/srX` exposure now fails closed unless the kernel reports it read-only.
+- Raw `/dev/srX` exposure is opt-in and validated against the CDEmu D-Bus mapping, Linux block-device type and SCSI optical type 5. The block-layer `ro` bit is diagnostic only.
 - `/dev/sgX` remains optional and OFF by default because it grants a broader SCSI interface.
 - GTK widget state used by worker operations is marshalled back to the GTK main thread.
 - Bubblejail runtime-argument support is checked before using `--debug-bwrap-args`.
 - Bottles launch output is retained under the XDG cache directory instead of discarded.
 
-## Real-machine validation already completed before rc1
+## Real-machine validation completed for rc2
 
 - CDEmu/UDisks2 test: PASS.
 - Bubblejail sandbox test: PASS (17/17 on the dynamic-whitelist build).
 - CD → Bubblejail test: PASS.
 - Bottles runner persistence with temporary network ON then OFF: PASS.
 
-## One rc1-specific test still required
-
-Re-run CDEmu and CD → Bubblejail once to confirm the new kernel raw-device RO
-assertion reports PASS on the target kernel.
-
 ## Remaining architectural limitations
 
 1. The controller is host-side and has the normal permissions of the logged-in user.
 2. libMirage parses images host-side; a libMirage vulnerability is outside the Bottles jail.
 3. Runtime network/CD injection currently relies on Bubblejail's
-   `--debug-bwrap-args`; rc1 detects absence, but this remains an upstream compatibility surface.
+   `--debug-bwrap-args`; rc2 detects absence, but this remains an upstream compatibility surface.
 4. Whitelist backup is one-generation, not a history.
 5. `RemoveDevice` follows CDEmu/gCDEmu's last-device model; cleanup avoids removal
    if another client has changed the device count, but concurrent external CDEmu

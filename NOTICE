@@ -1,4 +1,4 @@
-Bottles Retro CD GUI 0.4.0-rc1
+Bottles Retro CD GUI 0.4.0-rc2
 
 The CDEmu D-Bus backend uses interface names, method signatures, signal names and
 client design patterns adapted from gCDEmu 3.3.1:
