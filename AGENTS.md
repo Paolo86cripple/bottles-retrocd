@@ -81,9 +81,9 @@ Security regressions are release blockers.
 - Apply Mesa GPU selection per launch; do not rewrite the persistent Bubblejail profile merely to change GPU.
 - Bubblejail 0.10.x `direct_rendering` is too broad for strict multi-GPU isolation: mask `/dev/dri` at runtime and bind back only the selected GPU's DRM card/render nodes.
 - Every normal Bottles launch must run a fail-closed **pre-launch** GPU probe that positively proves `DRI_PRIME`, selected DRM-node presence, known non-selected DRM-node absence, exactly one Vulkan device, and matching vendor/device identity.
-- Every normal Bottles launch must then run the same proof **post-launch against the already-running Bubblejail instance**. If attachment or proof fails, terminate the exact launch process group and report launch failure.
-- Absence of a success/proof marker is failure; do not infer success from lack of an explicit failure marker.
-- The manual Vulkan/GPU test must use the same validator as the normal launch path.
+- Every normal Bottles launch must then run a fail-closed **post-launch proof against the already-running Bubblejail instance**. An attached debug shell may receive a fresh shell environment, so the post-launch proof does not require its `DRI_PRIME` marker; it still must positively prove selected DRM-node presence, known non-selected DRM-node absence, exactly one Vulkan device, and matching vendor/device identity. If attachment or proof fails, terminate the exact launch process group and report launch failure.
+- Absence of a required success/proof marker is failure; do not infer success from lack of an explicit failure marker.
+- The manual Vulkan/GPU test must use the same strict validator as the normal launch path.
 - Do not further hide GPU-related sysfs unless a concrete threat or requirement justifies the Mesa/udev compatibility risk.
 
 ### Optical devices
@@ -222,6 +222,7 @@ Baseline release tests:
    - launch each GPU and require both pre- and post-launch GPU proof lines;
    - verify selected DRM nodes are present and all known non-selected GPU nodes absent;
    - verify exactly one Vulkan device with matching vendor/device IDs;
+   - verify `DRI_PRIME` during the pre-launch probe;
    - verify failure to prove the running sandbox terminates the launch.
 
 4. **CD → Bubblejail**
