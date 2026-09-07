@@ -12,6 +12,7 @@ PCI_RE = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$")
 HEX4_RE = re.compile(r"^[0-9a-fA-F]{4}$")
 CARD_NODE_RE = re.compile(r"^card[0-9]+$")
 RENDER_NODE_RE = re.compile(r"^renderD[0-9]+$")
+GPU_PROBE_PATH = "/usr/bin:/bin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,18 +235,27 @@ def bubblejail_gpu_probe_invocation(
 
     Bubblejail 0.10.4 does not attach ``--debug-shell`` to an already-running
     instance: the CLI switches to its helper RPC path and forwards only the
-    positional command.  Therefore a running-instance probe must use ``--wait``
+    positional command. Therefore a running-instance probe must use ``--wait``
     plus an explicit shell command, which executes inside the existing sandbox
-    and returns combined stdout/stderr through the helper.  The pre-launch path
-    keeps the already validated debug-shell + stdin flow so the exact temporary
-    bwrap policy can be tested before Bottles starts.
+    and returns combined stdout/stderr through the helper.
+
+    Probe commands run with a fixed system PATH and C locale. This avoids both
+    helper-RPC environment differences and user-controlled PATH entries from
+    changing which ``vulkaninfo`` binary supplies the security proof.
     """
     validate_gpu_info(gpu)
     if not instance or instance.startswith("-"):
         raise RuntimeError(f"Nome istanza Bubblejail non valido: {instance!r}")
+    probe_script = (
+        f"PATH={GPU_PROBE_PATH}\n"
+        "export PATH\n"
+        "LC_ALL=C\n"
+        "export LC_ALL\n"
+        + script
+    )
     if attached:
-        return ["bubblejail", "run", "--wait", instance, "/bin/sh", "-c", script], None
-    return ["bubblejail", "run", *bubblewrap_gpu_args(gpu), "--debug-shell", instance], script
+        return ["bubblejail", "run", "--wait", instance, "/bin/sh", "-c", probe_script], None
+    return ["bubblejail", "run", *bubblewrap_gpu_args(gpu), "--debug-shell", instance], probe_script
 
 
 def parse_vulkan_summary(text: str) -> list[dict[str, str]]:
@@ -278,7 +288,7 @@ def validate_gpu_probe_output(
     """Validate a Bubblejail GPU probe; absence of required proof is failure.
 
     The pre-launch probe requires DRI_PRIME because it starts with the exact
-    runtime bwrap environment.  A command injected through Bubblejail's helper
+    runtime bwrap environment. A command injected through Bubblejail's helper
     into an already-running instance may receive a fresh process environment,
     so the post-launch proof intentionally ignores that environment marker while
     still requiring the effective DRM-node and Vulkan identity isolation.
