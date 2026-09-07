@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import re
 import shutil
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 PCI_RE = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$")
+HEX4_RE = re.compile(r"^[0-9a-fA-F]{4}$")
+CARD_NODE_RE = re.compile(r"^card[0-9]+$")
+RENDER_NODE_RE = re.compile(r"^renderD[0-9]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,28 +170,55 @@ def gpu_by_pci(gpus: list[GPUInfo], pci_address: str | None) -> GPUInfo | None:
     return next((gpu for gpu in gpus if gpu.pci_address.casefold() == wanted), None)
 
 
+def validate_gpu_info(gpu: GPUInfo) -> None:
+    """Validate the stable GPU identity before it can affect sandbox policy."""
+    if not PCI_RE.fullmatch(gpu.pci_address):
+        raise RuntimeError(f"GPU con indirizzo PCI non valido: {gpu.pci_address!r}")
+    if not HEX4_RE.fullmatch(gpu.vendor_id):
+        raise RuntimeError(f"GPU {gpu.pci_address}: vendor ID non valido: {gpu.vendor_id!r}")
+    if not HEX4_RE.fullmatch(gpu.device_id):
+        raise RuntimeError(f"GPU {gpu.pci_address}: device ID non valido: {gpu.device_id!r}")
+    if not gpu.card_node or not CARD_NODE_RE.fullmatch(Path(gpu.card_node).name):
+        raise RuntimeError(f"GPU {gpu.pci_address}: DRM card node non valido: {gpu.card_node!r}")
+    if not gpu.render_node or not RENDER_NODE_RE.fullmatch(Path(gpu.render_node).name):
+        raise RuntimeError(f"GPU {gpu.pci_address}: DRM render node non valido: {gpu.render_node!r}")
+    if not gpu.driver:
+        raise RuntimeError(f"GPU {gpu.pci_address}: driver kernel non determinabile")
+
+
+def validate_gpu_runtime(gpu: GPUInfo) -> None:
+    """Fail closed unless both selected DRM nodes are live character devices."""
+    validate_gpu_info(gpu)
+    for label, raw in (("card", gpu.card_node), ("render", gpu.render_node)):
+        path = Path(raw)
+        try:
+            mode = path.stat().st_mode
+        except OSError as exc:
+            raise RuntimeError(f"GPU {gpu.pci_address}: nodo DRM {label} non accessibile: {path}: {exc}") from exc
+        if not stat.S_ISCHR(mode):
+            raise RuntimeError(f"GPU {gpu.pci_address}: nodo DRM {label} non è un character device: {path}")
+
+
 def mesa_env(gpu: GPUInfo | None) -> dict[str, str]:
     if gpu is None:
         return {}
+    validate_gpu_info(gpu)
     return {"DRI_PRIME": gpu.mesa_dri_prime, "MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE": "1"}
 
 
 def bubblewrap_gpu_args(gpu: GPUInfo | None) -> list[str]:
+    if gpu is None:
+        raise RuntimeError("GPU obbligatoria: rifiutato avvio con selezione Mesa implicita.")
+    validate_gpu_info(gpu)
     args: list[str] = []
     for key, value in mesa_env(gpu).items():
         args += ["--debug-bwrap-args", "setenv", key, value]
-
-    if gpu is None:
-        return args
-    if not gpu.render_node:
-        raise RuntimeError(f"GPU {gpu.pci_address}: render node non disponibile")
 
     # Bubblejail direct_rendering currently exposes the whole /dev/dri.
     # Extra bwrap arguments are appended afterwards, so mask that view and
     # re-open only the nodes belonging to the selected GPU.
     args += ["--debug-bwrap-args", "tmpfs", "/dev/dri"]
-    if gpu.card_node:
-        args += ["--debug-bwrap-args", "dev-bind", gpu.card_node, gpu.card_node]
+    args += ["--debug-bwrap-args", "dev-bind", gpu.card_node, gpu.card_node]
     args += ["--debug-bwrap-args", "dev-bind", gpu.render_node, gpu.render_node]
     return args
 
@@ -210,3 +241,50 @@ def parse_vulkan_summary(text: str) -> list[dict[str, str]]:
     if current:
         devices.append(current)
     return devices
+
+
+def validate_gpu_probe_output(
+    gpu: GPUInfo,
+    text: str,
+    *,
+    hidden_nodes: list[str] | tuple[str, ...] = (),
+) -> dict[str, str]:
+    """Validate a Bubblejail GPU probe; absence of proof is treated as failure."""
+    validate_gpu_info(gpu)
+    if "GPU_VULKANINFO_MISSING=1" in text:
+        raise RuntimeError("vulkaninfo non è disponibile dentro Bubblejail.")
+
+    dri_prime = ""
+    for line in text.splitlines():
+        if line.startswith("GPU_DRI_PRIME="):
+            dri_prime = line.split("=", 1)[1].strip()
+            break
+    if dri_prime != gpu.mesa_dri_prime:
+        raise RuntimeError(
+            f"DRI_PRIME non confermato nella jail: atteso {gpu.mesa_dri_prime!r}, ottenuto {dri_prime!r}."
+        )
+
+    for node in (gpu.card_node, gpu.render_node):
+        if f"GPU_SELECTED_NODE_OK={node}" not in text:
+            raise RuntimeError(f"Nodo DRM selezionato non confermato nella jail: {node}")
+        if f"GPU_SELECTED_NODE_MISSING={node}" in text:
+            raise RuntimeError(f"Nodo DRM selezionato mancante nella jail: {node}")
+
+    for node in hidden_nodes:
+        if f"GPU_HIDDEN_NODE_VISIBLE={node}" in text:
+            raise RuntimeError(f"Isolamento GPU fallito; nodo non selezionato visibile: {node}")
+        if f"GPU_HIDDEN_NODE_OK={node}" not in text:
+            raise RuntimeError(f"Assenza del nodo non selezionato non confermata: {node}")
+
+    devices = parse_vulkan_summary(text)
+    if len(devices) != 1:
+        raise RuntimeError(f"La jail deve esporre una sola GPU Vulkan; rilevate {len(devices)}.")
+    actual = devices[0]
+    vendor = actual.get("vendorID", "").lower().removeprefix("0x").zfill(4)
+    device = actual.get("deviceID", "").lower().removeprefix("0x").zfill(4)
+    if vendor != gpu.vendor_id.lower() or device != gpu.device_id.lower():
+        raise RuntimeError(
+            f"GPU Vulkan diversa da quella richiesta: attesa {gpu.vendor_id}:{gpu.device_id}, "
+            f"ottenuta {vendor}:{device} ({actual.get('deviceName', 'nome sconosciuto')})."
+        )
+    return actual
