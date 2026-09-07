@@ -136,7 +136,12 @@ exit 0
             raise RuntimeError(
                 f"Probe GPU Bubblejail {phase} fallito con rc={proc.returncode}:\n{proc.stdout[-4000:]}"
             )
-        actual = validate_gpu_probe_output(gpu, proc.stdout, hidden_nodes=hidden_nodes)
+        actual = validate_gpu_probe_output(
+            gpu,
+            proc.stdout,
+            hidden_nodes=hidden_nodes,
+            require_dri_prime=not attached,
+        )
         phase = "post-avvio" if attached else "pre-avvio"
         return (
             f"[PASS] GPU {phase}: {gpu.pci_address} · {gpu.vendor_id}:{gpu.device_id} · "
