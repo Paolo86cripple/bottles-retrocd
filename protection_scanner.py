@@ -14,6 +14,7 @@ from typing import Iterable, Iterator
 SCAN_CHUNK = 4 * 1024 * 1024
 MAX_ISO_DEPTH = 16
 MAX_ISO_ENTRIES = 100_000
+MAX_DIRECTORY_EXTENT = 64 * 1024 * 1024
 MAX_FILE_SAMPLE = 2 * 1024 * 1024
 
 SIGNATURES: dict[str, tuple[bytes, ...]] = {
@@ -207,6 +208,10 @@ def _walk_iso(reader: SectorReader, root: _DirRecord, joliet: bool) -> Iterator[
         prefix, directory, depth = stack.pop()
         if depth > MAX_ISO_DEPTH:
             continue
+        if directory.size > MAX_DIRECTORY_EXTENT:
+            raise ImageScannerError(
+                f"Directory ISO troppo grande: {directory.size} byte (limite {MAX_DIRECTORY_EXTENT})."
+            )
         key = (directory.lba, directory.size)
         if key in visited_dirs:
             continue
@@ -263,7 +268,6 @@ def _stream_raw_signatures(path: Path) -> dict[str, set[str]]:
                         evidence[protection].add(
                             f"raw@0x{logical_start + idx:x}: {pattern.decode('ascii', errors='replace')}"
                         )
-                        # One raw hit per signature is enough; keeps reports bounded.
                         break
             overlap = data[-(max_pattern - 1):] if max_pattern > 1 else b""
             offset += len(chunk)
@@ -300,8 +304,6 @@ def scan_image(path: Path) -> ScanResult:
             name_chunks.append((f"iso-name:{iso_path}", encoded))
             if not record.is_dir and record.size > 0:
                 low = iso_path.casefold()
-                # Sample likely metadata/executables/drivers and files whose names
-                # already resemble protection components. Never execute them.
                 interesting = low.endswith((".exe", ".dll", ".sys", ".vxd", ".inf", ".ini", ".tmp"))
                 if interesting:
                     try:
@@ -320,7 +322,6 @@ def scan_image(path: Path) -> ScanResult:
         if not values:
             continue
         ordered = tuple(sorted(values)[:16])
-        # Filename/file-content evidence is stronger than an isolated raw string.
         strong = any(not item.startswith("raw@") for item in ordered)
         confidence = "alta" if strong and len(ordered) >= 2 else "media" if strong else "bassa"
         findings.append(ScanFinding(protection, confidence, ordered))
