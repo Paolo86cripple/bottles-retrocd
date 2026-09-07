@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — Redump/TOSEC verifier final review candidate
+
+- restored the previously reviewed Redump/TOSEC verifier work and integrated it into the current multidisc/GPU `main` lineage;
+- added read-only CUE/TOC/CCD/MDS payload resolution with canonical root containment and explicit rejection of descriptor path escape/Windows absolute references;
+- added one-pass streaming CRC32/MD5/SHA1 hashing and a persistent SQLite hash cache invalidated by device/inode/size/mtime/ctime changes;
+- added incremental Logiqx XML parsing into a persistent SQLite catalog, retaining source, DAT, description, serial, version and protection metadata;
+- exact verification now requires a complete 1:1 payload multiset against one DAT game; duplicate complete records remain `AMBIGUOUS` rather than being silently selected;
+- added exact multidisc-set verification without modifying archive files;
+- added official Redump PC and TOSEC updater paths restricted to HTTPS and an explicit official-host allow-list;
+- DAT updates are bounded, staged, parsed and indexed before installation; ZIP traversal/symlinks are rejected and post-swap failures restore the previous generation;
+- local DAT import copies metadata only into the verifier data area and leaves original DAT files untouched;
+- added a read-only protection scanner for ISO9660/Joliet and common raw-sector layouts plus streaming raw-signature detection;
+- added explicit DAT↔scanner comparison while keeping scanner evidence independent from cryptographic DAT matching;
+- added `verifier_cli.py` for stats, verify, verify-set, scan, verify-scan and update/import diagnostics;
+- added a dedicated **Verifica** GTK tab;
+- restored the reviewed **Pulisci log** action using `_clear_log`; it clears the current `Gtk.TextBuffer` only and is disabled while the controller is busy;
+- preserved the already validated rc2/multidisc GUI controller byte-for-byte in `bottles-retro-cd-gui-base.py`, with the verifier entrypoint layered as a subclass to minimise regression risk in CDEmu/Bubblejail/GPU paths;
+- hardened CI to compile all Python modules, treat `ResourceWarning` as an error, run the full suite and reject `os.system`, `shell=True`, `eval` and dynamic `exec` patterns;
+- regression suite restored to **65 tests**: 19 existing + 35 verifier/updater + 11 scanner tests.
+
 ## Unreleased — multidisc review candidate
 
 - explicit Redump/TOSEC disc sets now start from exactly the selected descriptor (including Disc 1); autodetection remains advisory and is never persisted implicitly;
