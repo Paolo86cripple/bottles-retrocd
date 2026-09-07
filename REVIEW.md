@@ -46,10 +46,10 @@ The later sandbox review found that the original selector was strict once a GPU 
 - `/dev/dri` is masked with a tmpfs and only the selected GPU card/render nodes are rebound.
 - A mandatory **pre-launch** debug-shell probe verifies `DRI_PRIME`, both selected DRM nodes, absence of all known non-selected GPU nodes, exactly one Vulkan device and matching vendor/device IDs.
 - The pre-launch probe must terminate cleanly; if it leaves a Bubblejail instance active, Bottles is not launched.
-- After the real Bottles Bubblejail process starts, the controller attaches a second debug-shell probe to the **already-running instance** and repeats the same positive-proof checks against the effective sandbox.
-- Absence of proof is failure: missing success markers are treated the same as explicit failure markers.
+- After the real Bottles Bubblejail process starts, the controller attaches a second debug-shell probe to the **already-running instance**. Because an attached debug shell may receive a fresh shell environment, this post-launch proof does not require its `DRI_PRIME` marker; it still requires both selected DRM nodes, absence of every known non-selected GPU node, exactly one Vulkan device and matching vendor/device IDs. This proves the effective device/Vulkan isolation rather than the environment of the diagnostic shell.
+- Absence of any required proof marker is failure: missing success markers are treated the same as explicit failure markers.
 - If the post-launch probe fails or cannot confirm the running instance, the exact Bubblejail process group captured for that launch is terminated; live multidisc state is cleaned when it is safe to do so; the GUI reports an explicit launch failure.
-- The manual **Test Vulkan** action now uses the same strict probe path as launch validation.
+- The manual **Test Vulkan** action uses the strict pre-launch validator, including `DRI_PRIME`.
 - GPU-related sysfs remains visible. This is deliberate to avoid unnecessary Mesa/udev compatibility risk; access control is enforced at the DRM device-node boundary.
 
 ## Recovered Redump/TOSEC verifier review
@@ -114,7 +114,7 @@ The later sandbox review found that the original selector was strict once a GPU 
 
 ## Static/regression review
 
-- Final branch CI: **73 tests PASS**.
+- Final branch CI target: **73 tests PASS**.
 - Composition: 19 original sandbox/settings/multidisc/bridge tests, 8 additional GPU fail-closed regression tests, 35 verifier/updater tests and 12 scanner tests.
 - Python syntax compilation includes all application, verifier, scanner and preserved-base modules.
 - Unit tests run with `PYTHONWARNINGS=error::ResourceWarning`.
@@ -137,6 +137,6 @@ The later sandbox review found that the original selector was strict once a GPU 
 Do not advance this candidate to `main` unless branch CI passes all **73 tests**, Python/static checks and shell check. After integration, repeat on the target CachyOS machine:
 
 1. launch with the Ryzen 7 9800X3D iGPU and confirm both pre/post GPU probe log lines;
-2. launch with the Radeon RX 9070 XT and confirm the same isolation proof;
+2. launch with the Radeon RX 9070 XT and confirm the same effective DRM/Vulkan isolation proof;
 3. verify the previously validated Discworld Noir Redump set and confirm descriptor/payload content and `mtime_ns` remain unchanged before/after verification;
 4. exercise one live multidisc session and confirm normal cache cleanup.
