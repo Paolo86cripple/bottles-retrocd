@@ -18,12 +18,22 @@ from typing import Callable
 
 from verifier_common import (
     MAX_ARCHIVE_MEMBERS, MAX_DOWNLOAD_BYTES, MAX_MEMBER_BYTES,
-    MAX_TOTAL_UNPACKED_BYTES, OFFICIAL_UPDATE_HOSTS, REDUMP_PC_URL,
+    MAX_TOTAL_UNPACKED_BYTES, OFFICIAL_UPDATE_HOSTS as BASE_OFFICIAL_UPDATE_HOSTS,
     TOSEC_DOWNLOADS_URL, TOSEC_DOWNLOAD_RE, TOSEC_FALLBACK_URL, TOSEC_ZIP_RE,
     UpdateError, UpdateReport, VerificationError, _ensure_private_dir,
     _safe_catalog_source, verifier_data_dir,
 )
 from verifier_catalog import CatalogIndex
+
+# Redump migrated the public site from redump.org to redump.info. Keep the
+# legacy hosts in the allow-list for backwards-compatible explicit URLs, but
+# use only the current HTTPS host for automatic updates.
+REDUMP_PC_URL = "https://redump.info/datfile/pc/serial,version"
+REDUMP_PC_FALLBACK_URL = "https://redump.info/datfile/pc/"
+OFFICIAL_UPDATE_HOSTS = frozenset(
+    set(BASE_OFFICIAL_UPDATE_HOSTS) | {"redump.info", "www.redump.info"}
+)
+
 
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
     def __init__(self, allowed_hosts: frozenset[str]):
@@ -84,6 +94,39 @@ def _download_bytes(
             if len(out) > max_bytes:
                 raise UpdateError(f"Download DAT supera il limite di {max_bytes} byte")
         return bytes(out), final_url
+
+
+def _looks_like_dat_payload(payload: bytes) -> bool:
+    head = payload[:1024 * 1024].lstrip()
+    if head.startswith((b"PK\x03\x04", b"PK\x05\x06")):
+        return True
+    return b"<datafile" in head.lower()
+
+
+def _download_redump_pc(
+    downloader: Callable[[str], tuple[bytes, str]],
+) -> tuple[bytes, str]:
+    """Fetch the current official Redump PC DAT, preferring serial/version.
+
+    Redump's enriched datfile endpoint adds serial and version elements without
+    changing the underlying ROM hashes. If it is temporarily unavailable or
+    returns an HTML error page, fall back to the standard PC datfile on the same
+    official HTTPS host. No third-party mirror is ever consulted automatically.
+    """
+    failures: list[str] = []
+    for candidate in (REDUMP_PC_URL, REDUMP_PC_FALLBACK_URL):
+        try:
+            payload, final_url = downloader(candidate)
+            _validate_update_url(final_url)
+            if not _looks_like_dat_payload(payload):
+                raise UpdateError("risposta non riconosciuta come DAT/XML o ZIP")
+            return payload, final_url
+        except UpdateError as exc:
+            failures.append(f"{candidate}: {exc}")
+    raise UpdateError(
+        "Download Redump PC fallito su tutti gli endpoint ufficiali HTTPS: "
+        + " | ".join(failures)
+    )
 
 
 def resolve_latest_tosec_url(fetcher: Callable[[str], tuple[bytes, str]] | None = None) -> str:
@@ -198,12 +241,19 @@ def update_official_source(
     _ensure_private_dir(data_root)
     catalog = catalog or CatalogIndex(data_root / "catalog.sqlite3")
     downloader = downloader or (lambda value: _download_bytes(value))
-    if url is None:
-        url = REDUMP_PC_URL if source == "redump" else resolve_latest_tosec_url(downloader)
-    _validate_update_url(url)
 
-    payload, final_url = downloader(url)
-    _validate_update_url(final_url)
+    payload: bytes | None = None
+    final_url: str | None = None
+    if url is None and source == "redump":
+        payload, final_url = _download_redump_pc(downloader)
+    else:
+        if url is None:
+            url = resolve_latest_tosec_url(downloader)
+        _validate_update_url(url)
+        payload, final_url = downloader(url)
+        _validate_update_url(final_url)
+
+    assert payload is not None and final_url is not None
 
     staging_parent = Path(tempfile.mkdtemp(prefix=f".{source}-update-", dir=data_root))
     staged_source = staging_parent / source
