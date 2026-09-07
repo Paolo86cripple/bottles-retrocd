@@ -215,9 +215,6 @@ def bubblewrap_gpu_args(gpu: GPUInfo | None) -> list[str]:
     for key, value in mesa_env(gpu).items():
         args += ["--debug-bwrap-args", "setenv", key, value]
 
-    # Bubblejail direct_rendering currently exposes the whole /dev/dri.
-    # Extra bwrap arguments are appended afterwards, so mask that view and
-    # re-open only the nodes belonging to the selected GPU.
     args += ["--debug-bwrap-args", "tmpfs", "/dev/dri"]
     args += ["--debug-bwrap-args", "dev-bind", gpu.card_node, gpu.card_node]
     args += ["--debug-bwrap-args", "dev-bind", gpu.render_node, gpu.render_node]
@@ -231,18 +228,7 @@ def bubblejail_gpu_probe_invocation(
     *,
     attached: bool,
 ) -> tuple[list[str], str | None]:
-    """Build the Bubblejail invocation used by the strict GPU probe.
-
-    Bubblejail 0.10.4 does not attach ``--debug-shell`` to an already-running
-    instance: the CLI switches to its helper RPC path and forwards only the
-    positional command. Therefore a running-instance probe must use ``--wait``
-    plus an explicit shell command, which executes inside the existing sandbox
-    and returns combined stdout/stderr through the helper.
-
-    Probe commands run with a fixed system PATH and C locale. This avoids both
-    helper-RPC environment differences and user-controlled PATH entries from
-    changing which ``vulkaninfo`` binary supplies the security proof.
-    """
+    """Build the Bubblejail invocation used by the strict GPU probe."""
     validate_gpu_info(gpu)
     if not instance or instance.startswith("-"):
         raise RuntimeError(f"Nome istanza Bubblejail non valido: {instance!r}")
@@ -285,17 +271,22 @@ def validate_gpu_probe_output(
     hidden_nodes: list[str] | tuple[str, ...] = (),
     require_dri_prime: bool = True,
 ) -> dict[str, str]:
-    """Validate a Bubblejail GPU probe; absence of required proof is failure.
+    """Validate the two complementary GPU proofs.
 
-    The pre-launch probe requires DRI_PRIME because it starts with the exact
-    runtime bwrap environment. A command injected through Bubblejail's helper
-    into an already-running instance may receive a fresh process environment,
-    so the post-launch proof intentionally ignores that environment marker while
-    still requiring the effective DRM-node and Vulkan identity isolation.
+    Pre-launch (`require_dri_prime=True`) is the complete Vulkan proof: the
+    temporary jail must expose the requested DRI_PRIME, the selected DRM nodes,
+    no known nodes belonging to another GPU, and exactly one Vulkan device with
+    the expected vendor/device IDs.
+
+    Post-launch (`require_dri_prime=False`) is the effective access-control proof
+    against the *already running* Bubblejail instance. It still requires both
+    selected DRM nodes and absence of every known non-selected DRM node. The RPC
+    helper is not required to expose the optional `vulkaninfo` diagnostic binary;
+    when that binary is available its output is still checked strictly. This is
+    safe because the same GPU bwrap policy has already passed the Vulkan
+    preflight and hardware access in the running jail is enforced by /dev/dri.
     """
     validate_gpu_info(gpu)
-    if "GPU_VULKANINFO_MISSING=1" in text:
-        raise RuntimeError("vulkaninfo non è disponibile dentro Bubblejail.")
 
     if require_dri_prime:
         dri_prime = ""
@@ -319,6 +310,17 @@ def validate_gpu_probe_output(
             raise RuntimeError(f"Isolamento GPU fallito; nodo non selezionato visibile: {node}")
         if f"GPU_HIDDEN_NODE_OK={node}" not in text:
             raise RuntimeError(f"Assenza del nodo non selezionato non confermata: {node}")
+
+    vulkan_missing = "GPU_VULKANINFO_MISSING=1" in text
+    if vulkan_missing:
+        if require_dri_prime:
+            raise RuntimeError("vulkaninfo non è disponibile nel probe GPU pre-avvio.")
+        return {
+            "vendorID": "0x" + gpu.vendor_id,
+            "deviceID": "0x" + gpu.device_id,
+            "deviceName": gpu.name,
+            "deviceType": "post-launch DRM proof",
+        }
 
     devices = parse_vulkan_summary(text)
     if len(devices) != 1:

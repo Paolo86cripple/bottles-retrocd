@@ -130,26 +130,48 @@ GPU0:
         return text
 
     def test_probe_validation_accepts_exact_single_gpu(self):
+        gpu = self._info()
         actual = validate_gpu_probe_output(
-            self._info(), self._probe_text(), hidden_nodes=["/dev/dri/card2"]
+            gpu, self._probe_text(), hidden_nodes=["/dev/dri/card2"]
         )
         self.assertEqual("AMD Radeon RX", actual["deviceName"])
 
-        # A command inserted into the already-running instance through the
-        # Bubblejail helper may have a fresh process environment. The post-launch
-        # proof therefore ignores DRI_PRIME but still requires effective device
-        # node and Vulkan isolation.
         post_text = self._probe_text().replace(
             "GPU_DRI_PRIME=pci-0000_03_00_0",
             "GPU_DRI_PRIME=",
         )
         post = validate_gpu_probe_output(
-            self._info(),
+            gpu,
             post_text,
             hidden_nodes=["/dev/dri/card2"],
             require_dri_prime=False,
         )
         self.assertEqual("AMD Radeon RX", post["deviceName"])
+
+        # Bubblejail's running-instance helper may not expose the optional
+        # vulkaninfo diagnostic binary. The post-launch proof must still pass
+        # when the effective DRM allow-list is proven, while the preflight must
+        # continue to fail closed without Vulkan evidence.
+        drm_only = """GPU_DRI_PRIME=
+GPU_SELECTED_NODE_OK=/dev/dri/card1
+GPU_SELECTED_NODE_OK=/dev/dri/renderD128
+GPU_HIDDEN_NODE_OK=/dev/dri/card2
+GPU_VULKANINFO_MISSING=1
+"""
+        fallback = validate_gpu_probe_output(
+            gpu,
+            drm_only,
+            hidden_nodes=["/dev/dri/card2"],
+            require_dri_prime=False,
+        )
+        self.assertEqual("post-launch DRM proof", fallback["deviceType"])
+        with self.assertRaises(RuntimeError):
+            validate_gpu_probe_output(
+                gpu,
+                drm_only,
+                hidden_nodes=["/dev/dri/card2"],
+                require_dri_prime=True,
+            )
 
     def test_probe_validation_rejects_visible_nonselected_node(self):
         with self.assertRaises(RuntimeError):
