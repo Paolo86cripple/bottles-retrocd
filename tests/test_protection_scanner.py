@@ -76,37 +76,31 @@ class ProtectionScannerTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    # 36
     def test_raw_signature_safedisc(self):
         image = self.root / 'raw.bin'; image.write_bytes(b'xx SafeDisc yy')
         result = ps.scan_image(image)
         self.assertIn('SafeDisc', [x.protection for x in result.findings])
 
-    # 37
     def test_raw_signature_securom_case_insensitive(self):
         image = self.root / 'raw.bin'; image.write_bytes(b'xx SECUROM yy')
         result = ps.scan_image(image)
         self.assertIn('SecuROM', [x.protection for x in result.findings])
 
-    # 38
     def test_no_signature(self):
         image = self.root / 'raw.bin'; image.write_bytes(b'plain data')
         result = ps.scan_image(image)
         self.assertEqual(result.findings, ())
 
-    # 39
     def test_iso2048_layout(self):
         image = make_iso(self.root / 'disc.iso')
         reader = ps.SectorReader(image)
         self.assertEqual((reader.sector_size, reader.data_offset), (2048, 0))
 
-    # 40
     def test_raw2352_layout(self):
         image = make_iso(self.root / 'disc.bin', raw=True)
         reader = ps.SectorReader(image)
         self.assertEqual((reader.sector_size, reader.data_offset), (2352, 16))
 
-    # 41
     def test_iso_filename_and_content_findings(self):
         image = make_iso(self.root / 'disc.iso', filename='SECDRV.SYS', content=b'SafeDisc secdrv.sys')
         result = ps.scan_image(image)
@@ -114,7 +108,6 @@ class ProtectionScannerTests(unittest.TestCase):
         self.assertIn(finding.confidence, {'alta', 'media'})
         self.assertGreater(result.files_seen, 0)
 
-    # 42
     def test_joliet_volume_and_filename(self):
         image = make_iso(self.root / 'disc.iso', joliet=True, filename='CMS_NT.DLL', content=b'SecuROM')
         result = ps.scan_image(image)
@@ -122,28 +115,38 @@ class ProtectionScannerTests(unittest.TestCase):
         self.assertEqual(result.volume_id, 'JOLIET')
         self.assertIn('SecuROM', [x.protection for x in result.findings])
 
-    # 43
+    def test_directory_extent_limit_is_fail_closed(self):
+        image = make_iso(self.root / 'disc.iso')
+        data = bytearray(image.read_bytes())
+        # Root record in the PVD starts at byte 156 of sector 16; inflate its
+        # little- and big-endian extent length beyond the scanner safety limit.
+        pos = 16 * 2048 + 156 + 10
+        huge = ps.MAX_DIRECTORY_EXTENT + 1
+        data[pos:pos+4] = huge.to_bytes(4, 'little')
+        data[pos+4:pos+8] = huge.to_bytes(4, 'big')
+        image.write_bytes(data)
+        result = ps.scan_image(image)
+        self.assertTrue(any('Directory ISO troppo grande' in note for note in result.notes))
+        self.assertEqual(result.files_seen, 0)
+
     def test_compare_catalog_consistent(self):
         image = self.root / 'raw.bin'; image.write_bytes(b'SafeDisc secdrv.sys')
         scan = ps.scan_image(image)
         lines = ps.compare_catalog_protection('SafeDisc 2.0', scan)
         self.assertIn('coerenti', lines[0])
 
-    # 44
     def test_compare_catalog_declared_not_found(self):
         image = self.root / 'raw.bin'; image.write_bytes(b'plain')
         scan = ps.scan_image(image)
         lines = ps.compare_catalog_protection('SecuROM', scan)
         self.assertIn('non ha trovato', lines[0])
 
-    # 45
     def test_compare_catalog_empty_but_observed(self):
         image = self.root / 'raw.bin'; image.write_bytes(b'StarForce sfdrv')
         scan = ps.scan_image(image)
         lines = ps.compare_catalog_protection('', scan)
         self.assertIn('scanner osserva', lines[0])
 
-    # 46
     def test_format_scan(self):
         image = self.root / 'raw.bin'; image.write_bytes(b'LaserLock')
         text = ps.format_scan(ps.scan_image(image))
