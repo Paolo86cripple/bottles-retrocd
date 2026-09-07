@@ -33,6 +33,11 @@ REDUMP_PC_FALLBACK_URL = "https://redump.info/datfile/pc/"
 OFFICIAL_UPDATE_HOSTS = frozenset(
     set(BASE_OFFICIAL_UPDATE_HOSTS) | {"redump.info", "www.redump.info"}
 )
+# Redump's official Caddy crawler guard blocks User-Agent values containing
+# tokens such as "bot" on generated download routes. "Bottles..." therefore
+# caused an accidental false positive because it begins with "Bot". Keep the
+# entire product identifier free of crawler-guard tokens, including URLs.
+UPDATE_USER_AGENT = "RetroCD-Verifier/0.4"
 
 
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
@@ -68,7 +73,7 @@ def _download_bytes(
     opener = opener or urllib.request.build_opener(_SafeRedirect(allowed_hosts))
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "BottlesRetroCD-Verifier/0.4 (+https://github.com/Paolo86cripple/bottles-retrocd)"},
+        headers={"User-Agent": UPDATE_USER_AGENT},
     )
     try:
         response = opener.open(request, timeout=45)
