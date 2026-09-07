@@ -113,6 +113,21 @@ GPU0:
         )
         self.assertEqual("AMD Radeon RX", actual["deviceName"])
 
+        # A debug shell attached to an already-running instance may have a fresh
+        # shell environment. The post-launch proof therefore ignores DRI_PRIME
+        # but still requires the effective device-node and Vulkan isolation.
+        post_text = self._probe_text().replace(
+            "GPU_DRI_PRIME=pci-0000_03_00_0",
+            "GPU_DRI_PRIME=",
+        )
+        post = validate_gpu_probe_output(
+            self._info(),
+            post_text,
+            hidden_nodes=["/dev/dri/card2"],
+            require_dri_prime=False,
+        )
+        self.assertEqual("AMD Radeon RX", post["deviceName"])
+
     def test_probe_validation_rejects_visible_nonselected_node(self):
         with self.assertRaises(RuntimeError):
             validate_gpu_probe_output(
