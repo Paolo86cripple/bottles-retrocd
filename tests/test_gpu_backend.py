@@ -75,9 +75,11 @@ class GpuBackendTests(unittest.TestCase):
             gpu, "Bottles", script, attached=True
         )
         self.assertEqual(
-            ["bubblejail", "run", "--wait", "Bottles", "/bin/sh", "-c", script],
-            attached_args,
+            ["bubblejail", "run", "--wait", "Bottles", "/bin/sh", "-c"],
+            attached_args[:-1],
         )
+        self.assertTrue(attached_args[-1].startswith("PATH=/usr/bin:/bin\nexport PATH\nLC_ALL=C\nexport LC_ALL\n"))
+        self.assertTrue(attached_args[-1].endswith(script))
         self.assertIsNone(attached_input)
         self.assertNotIn("--debug-shell", attached_args)
 
@@ -86,7 +88,8 @@ class GpuBackendTests(unittest.TestCase):
         )
         self.assertIn("--debug-shell", pre_args)
         self.assertNotIn("--wait", pre_args)
-        self.assertEqual(script, pre_input)
+        self.assertTrue(pre_input.startswith("PATH=/usr/bin:/bin\nexport PATH\nLC_ALL=C\nexport LC_ALL\n"))
+        self.assertTrue(pre_input.endswith(script))
 
     def test_bubblewrap_rejects_implicit_default_gpu(self):
         with self.assertRaises(RuntimeError):
