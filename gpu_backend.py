@@ -248,21 +248,30 @@ def validate_gpu_probe_output(
     text: str,
     *,
     hidden_nodes: list[str] | tuple[str, ...] = (),
+    require_dri_prime: bool = True,
 ) -> dict[str, str]:
-    """Validate a Bubblejail GPU probe; absence of proof is treated as failure."""
+    """Validate a Bubblejail GPU probe; absence of required proof is failure.
+
+    The pre-launch probe requires DRI_PRIME because it starts with the exact
+    runtime bwrap environment.  A debug shell attached to an already-running
+    Bubblejail instance may be created with a fresh shell environment, so the
+    post-launch proof can intentionally ignore that environment marker while
+    still requiring the effective DRM-node and Vulkan identity isolation.
+    """
     validate_gpu_info(gpu)
     if "GPU_VULKANINFO_MISSING=1" in text:
         raise RuntimeError("vulkaninfo non è disponibile dentro Bubblejail.")
 
-    dri_prime = ""
-    for line in text.splitlines():
-        if line.startswith("GPU_DRI_PRIME="):
-            dri_prime = line.split("=", 1)[1].strip()
-            break
-    if dri_prime != gpu.mesa_dri_prime:
-        raise RuntimeError(
-            f"DRI_PRIME non confermato nella jail: atteso {gpu.mesa_dri_prime!r}, ottenuto {dri_prime!r}."
-        )
+    if require_dri_prime:
+        dri_prime = ""
+        for line in text.splitlines():
+            if line.startswith("GPU_DRI_PRIME="):
+                dri_prime = line.split("=", 1)[1].strip()
+                break
+        if dri_prime != gpu.mesa_dri_prime:
+            raise RuntimeError(
+                f"DRI_PRIME non confermato nella jail: atteso {gpu.mesa_dri_prime!r}, ottenuto {dri_prime!r}."
+            )
 
     for node in (gpu.card_node, gpu.render_node):
         if f"GPU_SELECTED_NODE_OK={node}" not in text:
