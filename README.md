@@ -12,6 +12,7 @@ Current version: **0.4.0-rc2 + unreleased verifier/multidisc work**.
 - explicit persistent filesystem whitelist with separate RW and RO paths;
 - network OFF by default, optionally enabled for one launch only;
 - per-launch GPU selector with integrated-GPU preference, persistent PCI-address selection and strict `/dev/dri` node isolation;
+- fail closed if GPU identity/nodes cannot be proven or if the effective running Bubblejail instance does not expose exactly the selected GPU;
 - CDEmu control over D-Bus using the same daemon API model as gCDEmu;
 - UDisks2 mount verification in read-only mode;
 - optional raw optical-device exposure for Wine, accepted only when it matches the CDEmu D-Bus mapping and is validated as a Linux SCSI optical block device;
@@ -27,11 +28,26 @@ Current version: **0.4.0-rc2 + unreleased verifier/multidisc work**.
 The interface is split into six tabs:
 
 1. **CDEmu** — drive selection, image load/eject and UDisks2 RO status.
-2. **Sandbox** — per-launch GPU, network and optical-device permissions, GPU Vulkan test, plus Bottles launch.
+2. **Sandbox** — per-launch GPU, network and optical-device permissions, GPU Vulkan/isolation test, plus Bottles launch.
 3. **Whitelist** — persistent Bubblejail `root_share` RO/RW management.
 4. **Advanced** — DPM, transfer-rate, bad-sector and DVD CSS emulation.
 5. **Test** — cumulative application log plus CDEmu/UDisks2, Bubblejail, bridge/cache and end-to-end CD → Bubblejail tests. The log can be copied or explicitly cleared with **Pulisci log**.
 6. **Verifica** — Redump PC/TOSEC DAT update/import, exact 1:1 image/set verification, protection scan and explicit DAT↔scanner comparison.
+
+## GPU/Bubblejail launch policy
+
+GPU selection is a security decision, not just a performance preference.
+
+- GPU identity is persisted by stable PCI address, never by `cardX` numbering.
+- Bottles launch is refused if no valid GPU can be selected; there is no implicit `Mesa default` fallback.
+- PCI/vendor/device/driver metadata and both selected DRM nodes are validated before launch.
+- The selected `cardN` and `renderD*` paths must be live character devices.
+- Bubblejail's broad `/dev/dri` view is masked and only those two selected nodes are rebound.
+- Before Bottles starts, a temporary Bubblejail probe must positively confirm `DRI_PRIME`, both selected nodes, absence of known nodes belonging to other GPUs, exactly one Vulkan device, and matching vendor/device IDs.
+- After Bottles starts, the GUI attaches the same probe to the already-running Bubblejail instance. If effective isolation cannot be confirmed, the launch process group is terminated and the GUI reports failure.
+- **Test Vulkan** uses the same positive-proof validator.
+
+The automatic post-launch guard is new in this candidate and must receive a final real-machine pass on the target Bubblejail 0.10.4 installation after integration.
 
 ## Verifier architecture
 
@@ -49,7 +65,7 @@ The verifier is host-side, but deliberately read-only with respect to archive ma
 
 Verifier data is stored under the user's XDG data/cache directories, not in the dump tree. The updater downloads only over HTTPS from allow-listed official Redump/TOSEC hosts, validates redirects, bounds compressed/unpacked inputs, rejects ZIP traversal/symlinks, builds a complete staged SQLite index and replaces the live generation only after validation. A failed update restores the previous catalog/DAT generation.
 
-The protection scanner never mounts or executes the image. It reads ISO9660/Joliet structures directly, supports common 2048/2336/2352-sector layouts, performs a bounded file-content scan plus a streaming raw-signature pass, and reports evidence separately from DAT metadata.
+The protection scanner never mounts or executes the image. It reads ISO9660/Joliet structures directly, supports common 2048/2336/2352-sector layouts, bounds directory depth/count/extent size and file samples, performs a streaming raw-signature pass, and reports evidence separately from DAT metadata.
 
 ## Current validation
 
@@ -66,14 +82,14 @@ following have been validated on real hardware in the existing rc2/multidisc wor
 - network isolation with only loopback;
 - persistent GPU selection by PCI address;
 - strict `/dev/dri` isolation exposing only the selected GPU nodes;
-- Vulkan identity test and successful Bottles launches on both available AMD GPUs;
+- Vulkan identity test and successful Bottles launches on both available AMD GPUs for the previous selector path;
 - Wayland, XWayland, audio, Vulkan/GPU and dconf;
 - dynamic `/dev/srX` plus `/mnt/cdemu` integration;
 - runner downloaded with temporary network ON persists inside Bubblejail's private HOME and remains available after reopening with network OFF;
 - static bridge A→B follows the selected mount without restarting Bubblejail;
 - Discworld Noir three-disc Redump set caches Disc 1/2/3 on distinct UDisks2 RO mounts and swaps correctly while Bottles remains open.
 
-The restored regression suite contains **65 unit tests**: the original 19 sandbox/GPU/multidisc tests plus 35 verifier/catalog/update tests and 11 protection-scanner tests. CI also compiles every Python module, treats `ResourceWarning` as an error and scans for unsafe dynamic execution patterns.
+The current branch CI passes **73 unit tests**: 19 original sandbox/settings/multidisc/bridge tests, 8 additional GPU fail-closed regression tests, 35 verifier/catalog/update tests and 12 protection-scanner tests. CI also compiles every Python module, treats `ResourceWarning` as an error and scans for unsafe dynamic execution patterns.
 
 The rc2 validates raw `/dev/srX` by CDEmu mapping, Linux block-device identity and SCSI optical type 5. The block-layer `ro` bit is diagnostic only; UDisks2 filesystem mounts remain fail-closed read-only.
 
