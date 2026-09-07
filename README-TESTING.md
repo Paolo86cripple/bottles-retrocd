@@ -26,7 +26,7 @@ The current branch suite contains **73 tests**:
 - 35 Redump/TOSEC verifier, Logiqx index, hash-cache and updater tests;
 - 12 read-only protection-scanner tests.
 
-The GPU tests cover rejection of an implicit default GPU, malformed stable identity, positive proof of the selected nodes, rejection of visible non-selected DRM nodes, Vulkan vendor/device mismatch, multiple Vulkan devices and missing proof markers.
+The GPU tests cover rejection of an implicit default GPU, malformed stable identity, positive proof of the selected nodes, rejection of visible non-selected DRM nodes, Vulkan vendor/device mismatch, multiple Vulkan devices, missing proof markers, and the distinction between pre-launch environment proof and post-launch effective-sandbox proof.
 
 The verifier tests include path-escape rejection, Windows absolute CUE rejection, streaming hash/cache invalidation, exact/partial/ambiguous DAT matches, ZIP traversal and ZIP symlink rejection, official-host HTTPS policy, local DAT immutability, corrupt-update rollback and injected `os.replace()` failure rollback.
 
@@ -50,10 +50,11 @@ Expected policy:
 - missing `--debug-bwrap-args` support -> launch refused;
 - selected DRM node missing in the jail -> launch refused;
 - any known DRM node from the non-selected GPU visible -> launch refused;
-- `DRI_PRIME` not positively confirmed -> launch refused;
+- `DRI_PRIME` not positively confirmed by the **pre-launch** probe -> launch refused;
+- the **post-launch** attached-shell probe does not depend on its shell `DRI_PRIME` value, but must still positively prove selected-node presence, non-selected-node absence, exactly one Vulkan GPU and matching vendor/device identity;
 - zero or more than one Vulkan GPU -> launch refused;
 - vendor/device mismatch -> launch refused;
-- post-launch debug-shell attachment or proof failure -> the exact Bubblejail launch process group is terminated and the GUI reports failure.
+- post-launch debug-shell attachment or effective-isolation proof failure -> the exact Bubblejail launch process group is terminated and the GUI reports failure.
 
 ## Existing runtime validation
 
