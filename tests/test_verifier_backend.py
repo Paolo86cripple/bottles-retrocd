@@ -205,6 +205,33 @@ class VerifierBackendTests(unittest.TestCase):
         self.index.rebuild({"redump": self._datdir(payload=dat_xml("Multi", [("one.bin", b"one"), ("two.bin", b"two")]))})
         self.assertTrue(self.index.verify(cue, self.root).matched)
 
+    def test_verify_cue_descriptor_when_dat_declares_it(self):
+        payload = b"disc payload"
+        bin_file = self.root / "disc.bin"; bin_file.write_bytes(payload)
+        cue_bytes = b'FILE "disc.bin" BINARY\n'
+        cue = self.root / "disc.cue"; cue.write_bytes(cue_bytes)
+        self.index.rebuild({
+            "redump": self._datdir(
+                payload=dat_xml("CueSet", [(cue.name, cue_bytes), (bin_file.name, payload)])
+            )
+        })
+        result = self.index.verify(cue, self.root)
+        self.assertTrue(result.matched)
+        self.assertEqual(len(result.payloads), 1)
+        self.assertEqual(result.payloads[0].path, bin_file.resolve())
+
+    def test_verify_declared_cue_descriptor_must_match(self):
+        payload = b"disc payload"
+        bin_file = self.root / "disc.bin"; bin_file.write_bytes(payload)
+        expected_cue = b'FILE "disc.bin" BINARY\n'
+        cue = self.root / "disc.cue"; cue.write_bytes(expected_cue + b"REM local-change\n")
+        self.index.rebuild({
+            "redump": self._datdir(
+                payload=dat_xml("CueSet", [(cue.name, expected_cue), (bin_file.name, payload)])
+            )
+        })
+        self.assertEqual(self.index.verify(cue, self.root).status, "MISMATCH")
+
     # 20
     def test_verify_partial_multifile_is_not_exact(self):
         one = self.root / "one.bin"; two = self.root / "two.bin"
