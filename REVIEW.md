@@ -2,7 +2,7 @@
 
 ## Status
 
-The existing rc2/GPU/multidisc runtime architecture remains the baseline. The recovered Redump/TOSEC verifier is layered onto that baseline without rewriting the validated CDEmu/Bubblejail/GPU controller: the former `bottles-retro-cd-gui.py` is preserved byte-for-byte as `bottles-retro-cd-gui-base.py`, while the public entrypoint subclasses it to add verifier UI and the reviewed log-clear action.
+The existing rc2/GPU/multidisc runtime architecture remains the baseline. The recovered Redump/TOSEC verifier is layered onto that baseline without rewriting the validated CDEmu/multidisc controller: the former `bottles-retro-cd-gui.py` is preserved as `bottles-retro-cd-gui-base.py`, while the public entrypoint subclasses it to add verifier UI, the reviewed log-clear action and the final fail-closed GPU/Bubblejail launch guard.
 
 This review treats optical images and downloaded/imported DATs as untrusted host-side input. The verifier never mounts or executes images and never writes inside the dump tree.
 
@@ -15,10 +15,12 @@ This review treats optical images and downloaded/imported DATs as untrusted host
 - CD → Bubblejail integration: PASS.
 - Temporary network ON followed by OFF: PASS.
 - Bottles runner persistence in the private Bubblejail HOME: PASS (`soda-11.0-8`).
-- GPU isolation/Vulkan identity: PASS on Ryzen 7 9800X3D iGPU and Radeon RX 9070 XT.
+- GPU isolation/Vulkan identity: PASS on Ryzen 7 9800X3D iGPU and Radeon RX 9070 XT for the pre-hardening selector path.
 - Discworld Noir three-disc live cache/swap lifecycle: PASS in the multidisc candidate.
 
-## Existing rc2 / GPU / multidisc security conclusions
+The new automatic GPU pre/post-launch guard is CI-reviewed and unit-tested but still requires one final real-machine pass on the target CachyOS installation after integration.
+
+## Existing rc2 / multidisc security conclusions
 
 - CDEmu is controlled through D-Bus rather than localized CLI parsing.
 - Persistent `[network]` is rejected; network is transient per Bottles launch.
@@ -29,9 +31,26 @@ This review treats optical images and downloaded/imported DATs as untrusted host
 - `/dev/sgX` remains optional and disabled by default.
 - UDisks2 mount state is verified rather than inferred from command success.
 - Worker operations do not read GTK widget state directly from worker threads.
-- GPU identity persists by PCI address and only the selected GPU DRM nodes are re-exposed after `/dev/dri` masking.
 - Live multidisc requires an explicit saved set; cache devices remain host-side and only the active optical device is exposed to Wine.
 - Cache cleanup revalidates device ownership/count/order/mapping before removal and aborts on concurrent external CDEmu changes.
+
+## Final GPU / Bubblejail fail-closed review
+
+The later sandbox review found that the original selector was strict once a GPU was selected, but the launch path could still fall back to `Mesa default` when no usable GPU was detected and the strict Vulkan/DRM verification was only a separate manual button. Those are now release-blocking failures rather than permissive fallbacks.
+
+- GPU identity still persists by stable PCI address; `cardX` ordering is never used as persistent identity.
+- The selected GPU must have a syntactically valid PCI address, 4-digit vendor/device IDs, a kernel driver, a DRM `cardN` node and a `renderD*` node.
+- Immediately before launch, both selected DRM paths must resolve to live character devices on the host.
+- `bubblewrap_gpu_args(None)` is rejected: there is no implicit Mesa-default launch path.
+- Bubblejail runtime-argument support is checked before any GPU policy is attempted.
+- `/dev/dri` is masked with a tmpfs and only the selected GPU card/render nodes are rebound.
+- A mandatory **pre-launch** debug-shell probe verifies `DRI_PRIME`, both selected DRM nodes, absence of all known non-selected GPU nodes, exactly one Vulkan device and matching vendor/device IDs.
+- The pre-launch probe must terminate cleanly; if it leaves a Bubblejail instance active, Bottles is not launched.
+- After the real Bottles Bubblejail process starts, the controller attaches a second debug-shell probe to the **already-running instance** and repeats the same positive-proof checks against the effective sandbox.
+- Absence of proof is failure: missing success markers are treated the same as explicit failure markers.
+- If the post-launch probe fails or cannot confirm the running instance, the exact Bubblejail process group captured for that launch is terminated; live multidisc state is cleaned when it is safe to do so; the GUI reports an explicit launch failure.
+- The manual **Test Vulkan** action now uses the same strict probe path as launch validation.
+- GPU-related sysfs remains visible. This is deliberate to avoid unnecessary Mesa/udev compatibility risk; access control is enforced at the DRM device-node boundary.
 
 ## Recovered Redump/TOSEC verifier review
 
@@ -80,7 +99,7 @@ This review treats optical images and downloaded/imported DATs as untrusted host
 
 - The scanner never mounts or executes images.
 - It recognizes ISO9660/Joliet volume descriptors from cooked 2048-byte sectors and common raw 2352/2336-byte sector layouts.
-- Directory traversal is bounded by depth and entry-count limits.
+- Directory traversal is bounded by depth, entry count and a hard 64 MiB per-directory extent limit; an oversized/malformed directory extent fails closed rather than causing an unbounded allocation.
 - File-content sampling is bounded; a separate raw scan streams the whole image with overlap sufficient for cross-chunk signatures.
 - Evidence is reported with confidence and source labels; it is not silently promoted into cryptographic DAT verification.
 - DAT protection metadata is compared explicitly with scanner observations. Scanner absence does not invalidate a cryptographic DAT match; scanner presence does not turn a DAT mismatch into a match.
@@ -91,11 +110,12 @@ This review treats optical images and downloaded/imported DATs as untrusted host
 - The reviewed **Pulisci log** callback is `_clear_log`.
 - `_clear_log` uses `Gtk.TextBuffer.set_text("")` and deliberately updates the status label directly rather than calling `set_message()`, which would immediately append a new line to the cleared log.
 - `Pulisci log`, `Copia log` and verifier actions are disabled while the controller is busy and re-enabled through the existing `set_busy()` lifecycle, including exception paths handled by `finish_background()`.
-- The base security-sensitive GUI remains byte-identical to the pre-verifier `main` version; verifier integration is isolated in the entrypoint subclass.
+- The preserved base controller remains unchanged; verifier and final GPU launch hardening are isolated in the public entrypoint subclass.
 
 ## Static/regression review
 
-- Regression suite composition: **65 tests total** = 19 existing + 35 verifier/updater + 11 scanner.
+- Final branch CI: **73 tests PASS**.
+- Composition: 19 original sandbox/settings/multidisc/bridge tests, 8 additional GPU fail-closed regression tests, 35 verifier/updater tests and 12 scanner tests.
 - Python syntax compilation includes all application, verifier, scanner and preserved-base modules.
 - Unit tests run with `PYTHONWARNINGS=error::ResourceWarning`.
 - Shell syntax remains checked with `bash -n run-local.sh`.
@@ -109,8 +129,14 @@ This review treats optical images and downloaded/imported DATs as untrusted host
 3. The protection scanner is heuristic evidence, not a copy-protection oracle; unknown or obfuscated protections can be missed.
 4. DAT authenticity currently relies on HTTPS transport plus official-host allow-list and structural/index validation. There is no detached cryptographic signature verification because the selected upstream distribution paths do not provide a uniform signed-manifest mechanism in this implementation.
 5. Abnormal GUI/process kill during a live multidisc session can still leave temporary host-side CDEmu cache drives until manual/next-session recovery, as documented in the multidisc review.
-6. GPU-related sysfs remains visible to avoid unnecessary Mesa/udev compatibility risk.
+6. The automatic post-launch GPU proof depends on Bubblejail allowing a debug-shell attachment to the already-running instance. Failure to attach is intentionally fail-closed and terminates the launch; this must be exercised once on the target Bubblejail 0.10.4 system.
+7. GPU-related sysfs remains visible to avoid unnecessary Mesa/udev compatibility risk.
 
 ## Merge criterion
 
-Do not advance this candidate to `main` unless the branch CI passes the full 65-test suite, Python/static checks and shell check. After merge, repeat the real-machine verifier test against the previously validated Discworld Noir Redump set and confirm descriptor/payload content and `mtime_ns` remain unchanged before/after verification.
+Do not advance this candidate to `main` unless branch CI passes all **73 tests**, Python/static checks and shell check. After integration, repeat on the target CachyOS machine:
+
+1. launch with the Ryzen 7 9800X3D iGPU and confirm both pre/post GPU probe log lines;
+2. launch with the Radeon RX 9070 XT and confirm the same isolation proof;
+3. verify the previously validated Discworld Noir Redump set and confirm descriptor/payload content and `mtime_ns` remain unchanged before/after verification;
+4. exercise one live multidisc session and confirm normal cache cleanup.
