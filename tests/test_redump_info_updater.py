@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 import tempfile
 import unittest
 import zlib
@@ -35,6 +36,52 @@ class RedumpInfoUpdaterTests(unittest.TestCase):
         )
         with self.assertRaises(vu.UpdateError):
             vu._validate_update_url("http://redump.info/datfile/pc/")
+
+    def test_update_user_agent_does_not_match_redump_crawler_guard(self):
+        # Mirrors the self-identifying crawler token list in Redump's official
+        # Caddyfile. "BottlesRetroCD..." used to match the leading "Bot" token.
+        guard = re.compile(
+            r"(?i)(bot|crawler|spider|slurp|archiver|facebookexternalhit|"
+            r"meta-externalagent|meta-webindexer|aiwebindex)"
+        )
+        self.assertIsNone(guard.search(vu.UPDATE_USER_AGENT))
+        self.assertTrue(vu.UPDATE_USER_AGENT.startswith("RetroCD-Verifier/"))
+
+    def test_download_bytes_sends_safe_product_user_agent(self):
+        class FakeResponse:
+            headers: dict[str, str] = {}
+
+            def __init__(self):
+                self._read = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def geturl(self):
+                return vu.REDUMP_PC_URL
+
+            def read(self, size):
+                if self._read:
+                    return b""
+                self._read = True
+                return b"<datafile></datafile>"
+
+        class FakeOpener:
+            def __init__(self):
+                self.user_agent = ""
+
+            def open(self, request, timeout):
+                self.user_agent = request.get_header("User-agent") or ""
+                return FakeResponse()
+
+        opener = FakeOpener()
+        payload, final_url = vu._download_bytes(vu.REDUMP_PC_URL, opener=opener)
+        self.assertEqual(payload, b"<datafile></datafile>")
+        self.assertEqual(final_url, vu.REDUMP_PC_URL)
+        self.assertEqual(opener.user_agent, vu.UPDATE_USER_AGENT)
 
     def test_redump_prefers_serial_version_endpoint(self):
         calls: list[str] = []
