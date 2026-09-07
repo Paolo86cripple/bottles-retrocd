@@ -26,7 +26,7 @@ The current branch suite contains **73 tests**:
 - 35 Redump/TOSEC verifier, Logiqx index, hash-cache and updater tests;
 - 12 read-only protection-scanner tests.
 
-The GPU tests cover rejection of an implicit default GPU, malformed stable identity, positive proof of the selected nodes, rejection of visible non-selected DRM nodes, Vulkan vendor/device mismatch, multiple Vulkan devices, missing proof markers, and the distinction between pre-launch environment proof and post-launch effective-sandbox proof.
+The GPU tests cover rejection of an implicit default GPU, malformed stable identity, positive proof of the selected nodes, rejection of visible non-selected DRM nodes, Vulkan vendor/device mismatch, multiple Vulkan devices, missing proof markers, the distinction between pre-launch environment proof and post-launch effective-sandbox proof, and the Bubblejail 0.10.4 rule that a running-instance probe must use `--wait` plus a positional command rather than `--debug-shell`.
 
 The verifier tests include path-escape rejection, Windows absolute CUE rejection, streaming hash/cache invalidation, exact/partial/ambiguous DAT matches, ZIP traversal and ZIP symlink rejection, official-host HTTPS policy, local DAT immutability, corrupt-update rollback and injected `os.replace()` failure rollback.
 
@@ -51,10 +51,12 @@ Expected policy:
 - selected DRM node missing in the jail -> launch refused;
 - any known DRM node from the non-selected GPU visible -> launch refused;
 - `DRI_PRIME` not positively confirmed by the **pre-launch** probe -> launch refused;
-- the **post-launch** attached-shell probe does not depend on its shell `DRI_PRIME` value, but must still positively prove selected-node presence, non-selected-node absence, exactly one Vulkan GPU and matching vendor/device identity;
+- the **post-launch** probe is injected into the already-running instance through Bubblejail's helper path (`bubblejail run --wait Bottles /bin/sh -c <probe>`); it does not depend on the injected process's `DRI_PRIME` value, but must still positively prove selected-node presence, non-selected-node absence, exactly one Vulkan GPU and matching vendor/device identity;
 - zero or more than one Vulkan GPU -> launch refused;
 - vendor/device mismatch -> launch refused;
-- post-launch debug-shell attachment or effective-isolation proof failure -> the exact Bubblejail launch process group is terminated and the GUI reports failure.
+- post-launch helper injection/output failure or effective-isolation proof failure -> the exact Bubblejail launch process group is terminated and the GUI reports failure.
+
+The earlier `--debug-shell` post-launch implementation was incorrect on Bubblejail 0.10.4 because an already-running instance is handled through helper RPC before the debug-shell launch path. A missing-marker result from that implementation is a probe-transport false negative and should be retested with this fix.
 
 ## Existing runtime validation
 

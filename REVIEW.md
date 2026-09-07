@@ -18,7 +18,7 @@ This review treats optical images and downloaded/imported DATs as untrusted host
 - GPU isolation/Vulkan identity: PASS on Ryzen 7 9800X3D iGPU and Radeon RX 9070 XT for the pre-hardening selector path.
 - Discworld Noir three-disc live cache/swap lifecycle: PASS in the multidisc candidate.
 
-The new automatic GPU pre/post-launch guard is CI-reviewed and unit-tested but still requires one final real-machine pass on the target CachyOS installation after integration.
+The automatic GPU pre/post-launch guard is CI-reviewed and unit-tested. The first target-machine post-launch attempt exposed an integration bug in the probe transport: Bubblejail 0.10.4 ignores `--debug-shell` once the instance is already running and instead routes positional commands through its helper RPC. That false-negative path is now corrected; one final real-machine pass is still required.
 
 ## Existing rc2 / multidisc security conclusions
 
@@ -46,9 +46,11 @@ The later sandbox review found that the original selector was strict once a GPU 
 - `/dev/dri` is masked with a tmpfs and only the selected GPU card/render nodes are rebound.
 - A mandatory **pre-launch** debug-shell probe verifies `DRI_PRIME`, both selected DRM nodes, absence of all known non-selected GPU nodes, exactly one Vulkan device and matching vendor/device IDs.
 - The pre-launch probe must terminate cleanly; if it leaves a Bubblejail instance active, Bottles is not launched.
-- After the real Bottles Bubblejail process starts, the controller attaches a second debug-shell probe to the **already-running instance**. Because an attached debug shell may receive a fresh shell environment, this post-launch proof does not require its `DRI_PRIME` marker; it still requires both selected DRM nodes, absence of every known non-selected GPU node, exactly one Vulkan device and matching vendor/device IDs. This proves the effective device/Vulkan isolation rather than the environment of the diagnostic shell.
+- After the real Bottles Bubblejail process starts, the controller injects the second probe through Bubblejail 0.10.4's supported running-instance path: `bubblejail run --wait <instance> /bin/sh -c <probe>`. The CLI detects the existing helper socket, sends the positional command through `send_run_rpc()`, and the helper executes it inside the existing sandbox with stdout/stderr captured.
+- The earlier `bubblejail run --debug-shell <instance>` post-launch implementation was incorrect for an already-running instance: `run_bjail()` returns through `run_running_instance()` before the `debug_shell` path is used. The resulting missing markers were therefore a probe-transport false negative, not proof that the selected DRM nodes were actually absent from Bottles.
+- The post-launch helper command may receive a fresh process environment, so this phase does not require its `DRI_PRIME` marker. It still requires both selected DRM nodes, absence of every known non-selected GPU node, exactly one Vulkan device and matching vendor/device IDs. This proves the effective device/Vulkan isolation of the running jail.
 - Absence of any required proof marker is failure: missing success markers are treated the same as explicit failure markers.
-- If the post-launch probe fails or cannot confirm the running instance, the exact Bubblejail process group captured for that launch is terminated; live multidisc state is cleaned when it is safe to do so; the GUI reports an explicit launch failure.
+- If helper injection, output collection or post-launch proof fails, the exact Bubblejail process group captured for that launch is terminated; live multidisc state is cleaned when it is safe to do so; the GUI reports an explicit launch failure.
 - The manual **Test Vulkan** action uses the strict pre-launch validator, including `DRI_PRIME`.
 - GPU-related sysfs remains visible. This is deliberate to avoid unnecessary Mesa/udev compatibility risk; access control is enforced at the DRM device-node boundary.
 
@@ -116,6 +118,7 @@ The later sandbox review found that the original selector was strict once a GPU 
 
 - Final branch CI target: **73 tests PASS**.
 - Composition: 19 original sandbox/settings/multidisc/bridge tests, 8 additional GPU fail-closed regression tests, 35 verifier/updater tests and 12 scanner tests.
+- The existing GPU invocation regression now explicitly asserts that a running-instance probe uses `--wait` + positional `/bin/sh -c` rather than `--debug-shell`.
 - Python syntax compilation includes all application, verifier, scanner and preserved-base modules.
 - Unit tests run with `PYTHONWARNINGS=error::ResourceWarning`.
 - Shell syntax remains checked with `bash -n run-local.sh`.
@@ -129,7 +132,7 @@ The later sandbox review found that the original selector was strict once a GPU 
 3. The protection scanner is heuristic evidence, not a copy-protection oracle; unknown or obfuscated protections can be missed.
 4. DAT authenticity currently relies on HTTPS transport plus official-host allow-list and structural/index validation. There is no detached cryptographic signature verification because the selected upstream distribution paths do not provide a uniform signed-manifest mechanism in this implementation.
 5. Abnormal GUI/process kill during a live multidisc session can still leave temporary host-side CDEmu cache drives until manual/next-session recovery, as documented in the multidisc review.
-6. The automatic post-launch GPU proof depends on Bubblejail allowing a debug-shell attachment to the already-running instance. Failure to attach is intentionally fail-closed and terminates the launch; this must be exercised once on the target Bubblejail 0.10.4 system.
+6. The automatic post-launch GPU proof depends on Bubblejail 0.10.4's running-instance helper RPC and its `--wait` response path. Any upstream incompatibility or timeout remains fail-closed and terminates/refuses the launch rather than silently skipping proof.
 7. GPU-related sysfs remains visible to avoid unnecessary Mesa/udev compatibility risk.
 
 ## Merge criterion

@@ -223,6 +223,31 @@ def bubblewrap_gpu_args(gpu: GPUInfo | None) -> list[str]:
     return args
 
 
+def bubblejail_gpu_probe_invocation(
+    gpu: GPUInfo,
+    instance: str,
+    script: str,
+    *,
+    attached: bool,
+) -> tuple[list[str], str | None]:
+    """Build the Bubblejail invocation used by the strict GPU probe.
+
+    Bubblejail 0.10.4 does not attach ``--debug-shell`` to an already-running
+    instance: the CLI switches to its helper RPC path and forwards only the
+    positional command.  Therefore a running-instance probe must use ``--wait``
+    plus an explicit shell command, which executes inside the existing sandbox
+    and returns combined stdout/stderr through the helper.  The pre-launch path
+    keeps the already validated debug-shell + stdin flow so the exact temporary
+    bwrap policy can be tested before Bottles starts.
+    """
+    validate_gpu_info(gpu)
+    if not instance or instance.startswith("-"):
+        raise RuntimeError(f"Nome istanza Bubblejail non valido: {instance!r}")
+    if attached:
+        return ["bubblejail", "run", "--wait", instance, "/bin/sh", "-c", script], None
+    return ["bubblejail", "run", *bubblewrap_gpu_args(gpu), "--debug-shell", instance], script
+
+
 def parse_vulkan_summary(text: str) -> list[dict[str, str]]:
     devices: list[dict[str, str]] = []
     current: dict[str, str] | None = None
@@ -253,9 +278,9 @@ def validate_gpu_probe_output(
     """Validate a Bubblejail GPU probe; absence of required proof is failure.
 
     The pre-launch probe requires DRI_PRIME because it starts with the exact
-    runtime bwrap environment.  A debug shell attached to an already-running
-    Bubblejail instance may be created with a fresh shell environment, so the
-    post-launch proof can intentionally ignore that environment marker while
+    runtime bwrap environment.  A command injected through Bubblejail's helper
+    into an already-running instance may receive a fresh process environment,
+    so the post-launch proof intentionally ignores that environment marker while
     still requiring the effective DRM-node and Vulkan identity isolation.
     """
     validate_gpu_info(gpu)

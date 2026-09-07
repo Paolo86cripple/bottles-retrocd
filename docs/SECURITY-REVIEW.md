@@ -27,8 +27,10 @@ The recovered verifier/multidisc candidate passes the current static and regress
 - Bubblejail's broad `/dev/dri` exposure is masked; only selected GPU DRM nodes are rebound.
 - A pre-launch probe positively verifies `DRI_PRIME`, selected DRM-node presence, non-selected DRM-node absence, one Vulkan GPU and vendor/device identity.
 - Missing success markers fail closed; lack of proof is not treated as success.
-- A second probe attaches to the already-running Bottles Bubblejail instance and verifies the **effective DRM/Vulkan isolation**: selected nodes present, known non-selected nodes absent, exactly one Vulkan GPU and matching vendor/device identity. It intentionally does not require the attached diagnostic shell to inherit `DRI_PRIME`, because that shell may receive a fresh environment unrelated to the already-running Bottles process.
-- If the running-instance attachment or effective-isolation proof fails, the exact captured Bubblejail process group is terminated and the launch is reported as failed.
+- Bubblejail 0.10.4 does **not** use `--debug-shell` when the instance is already running. Its CLI detects the helper socket and forwards positional commands through `send_run_rpc()`. The post-launch probe therefore uses `bubblejail run --wait <instance> /bin/sh -c <probe>` so the helper executes it inside the already-running Bottles sandbox and returns combined stdout/stderr.
+- The first real-machine post-launch attempt used `--debug-shell` and produced missing DRM proof markers. Source review showed this was a probe-transport false negative rather than evidence that Bottles had actually lost the selected DRM nodes.
+- The running-instance helper probe verifies the **effective DRM/Vulkan isolation**: selected nodes present, known non-selected nodes absent, exactly one Vulkan GPU and matching vendor/device identity. It intentionally does not require the injected process to report `DRI_PRIME`, because that process may receive a fresh environment unrelated to the already-running Bottles process.
+- If helper injection, output collection or effective-isolation proof fails, the exact captured Bubblejail process group is terminated and the launch is reported as failed.
 - **Test Vulkan** uses the strict pre-launch validator, including `DRI_PRIME`.
 - GPU sysfs remains visible deliberately for Mesa/udev compatibility; the access-control boundary is `/dev/dri`.
 
@@ -63,6 +65,8 @@ Current branch CI must pass:
 - `bash -n run-local.sh`;
 - source scan rejecting `os.system`, `shell=True`, `eval` and dynamic `exec` patterns.
 
+The existing GPU regression test now also asserts the Bubblejail 0.10.4 routing rule: pre-launch uses the validated debug-shell flow, while a running-instance post-launch probe uses `--wait` plus a positional `/bin/sh -c` command and never `--debug-shell`.
+
 ## Real-machine validation already completed on the earlier runtime path
 
 - CDEmu/UDisks2 test: PASS.
@@ -81,7 +85,7 @@ After integration, repeat both GPU selections and require the cumulative log to 
 1. The controller, verifier and CDEmu/libMirage are host-side and have the normal permissions of the logged-in user.
 2. libMirage and Python standard-library XML/ZIP/image parsing process untrusted bytes outside the Bottles jail; inputs are bounded/hardened but this is still a host-side parser surface.
 3. Runtime network/CD/GPU injection relies on Bubblejail `--debug-bwrap-args`; absence or incompatible behavior now fails closed, but this remains an upstream compatibility surface.
-4. The automatic post-launch GPU proof depends on debug-shell attachment to an existing Bubblejail instance; failure to attach terminates the launch.
+4. The automatic post-launch GPU proof depends on Bubblejail 0.10.4's running-instance helper RPC and `--wait` response path; incompatibility or timeout is intentionally fail-closed.
 5. Whitelist backup is one-generation, not a history.
 6. Concurrent external CDEmu management remains a race to avoid during diagnostics/live cache ownership checks.
 7. Abnormal GUI/process kill can leave temporary live-multidisc CDEmu cache devices until manual or future recovery handling.
