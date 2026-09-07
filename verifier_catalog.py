@@ -246,15 +246,13 @@ class CatalogIndex:
     def _rom_signature(row: Sequence[object]) -> tuple[int, str, str, str]:
         return int(row[0]), str(row[1]), str(row[2]), str(row[3])
 
-    def _game_exact(self, db: sqlite3.Connection, game_id: int, local: Sequence[FileHash]) -> bool:
-        rows = db.execute(
-            "SELECT size,crc32,md5,sha1 FROM roms WHERE game_id=? ORDER BY id", (game_id,)
-        ).fetchall()
+    @classmethod
+    def _rows_match_local(cls, rows: Sequence[Sequence[object]], local: Sequence[FileHash]) -> bool:
         if len(rows) != len(local):
             return False
         # Match a multiset. Prefer SHA-1, but keep all digests in the tuple so a
         # malformed DAT cannot accidentally weaken an exact-set comparison.
-        expected = Counter(self._rom_signature(row) for row in rows)
+        expected = Counter(cls._rom_signature(row) for row in rows)
         actual = Counter((f.size, f.crc32, f.md5, f.sha1) for f in local)
         # DATs can omit MD5/SHA1; compare each expected record against one local record.
         if expected == actual:
@@ -278,6 +276,30 @@ class CatalogIndex:
             remaining.pop(found)
         return not remaining
 
+    def _game_exact(
+        self,
+        db: sqlite3.Connection,
+        game_id: int,
+        payloads: Sequence[FileHash],
+        descriptor_hash: FileHash | None = None,
+    ) -> bool:
+        rows = db.execute(
+            "SELECT size,crc32,md5,sha1 FROM roms WHERE game_id=? ORDER BY id", (game_id,)
+        ).fetchall()
+        # Descriptor formats are metadata containers locally, but Redump may
+        # explicitly catalogue the descriptor itself (for example a .cue) as
+        # part of the verified disc set. First preserve payload-only DAT
+        # semantics; only add the descriptor when the DAT requires one extra
+        # exact file. This prevents an unlisted local descriptor from weakening
+        # or invalidating an otherwise exact payload set.
+        if self._rows_match_local(rows, payloads):
+            return True
+        if descriptor_hash is None:
+            return False
+        if any(item.path == descriptor_hash.path for item in payloads):
+            return False
+        return self._rows_match_local(rows, (*payloads, descriptor_hash))
+
     def verify(self, descriptor: Path, root: Path | None = None) -> VerificationResult:
         if not self.exists():
             return VerificationResult(
@@ -286,6 +308,10 @@ class CatalogIndex:
             )
         payload_paths = descriptor_payloads(descriptor, root)
         hashes = tuple(hash_file(path, self.cache) for path in payload_paths)
+        descriptor_path = descriptor.expanduser().resolve(strict=True)
+        descriptor_hash = None
+        if descriptor_path not in payload_paths:
+            descriptor_hash = hash_file(descriptor_path, self.cache)
         with contextlib.closing(self._connect()) as db:
             file_matches = tuple(
                 FileMatch(item, self._matching_games_for_file(db, item)) for item in hashes
@@ -301,12 +327,12 @@ class CatalogIndex:
                 for match in fm.candidates
             }
             for game_id in sorted(common):
-                if self._game_exact(db, game_id, hashes):
+                if self._game_exact(db, game_id, hashes, descriptor_hash):
                     exact.append(by_id[game_id])
 
         if len(exact) == 1:
             status = "MATCH"
-            detail = "MATCH 1:1: tutti i payload corrispondono a un singolo set DAT completo."
+            detail = "MATCH 1:1: tutti i file dichiarati dal set DAT corrispondono esattamente."
         elif len(exact) > 1:
             status = "AMBIGUOUS"
             detail = f"Match completo ma ambiguo: {len(exact)} record DAT equivalenti."
