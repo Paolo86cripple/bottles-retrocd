@@ -70,30 +70,27 @@ class GpuBackendTests(unittest.TestCase):
         self.assertIn("/dev/dri/renderD128", args)
         self.assertEqual(2, args.count("dev-bind"))
 
-    def test_bubblewrap_rejects_implicit_default_gpu(self):
-        with self.assertRaises(RuntimeError):
-            bubblewrap_gpu_args(None)
-
-    def test_probe_invocation_routes_running_instance_through_helper_rpc(self):
-        gpu = self._info()
         script = "printf 'probe\\n'"
-
-        args, input_text = bubblejail_gpu_probe_invocation(
+        attached_args, attached_input = bubblejail_gpu_probe_invocation(
             gpu, "Bottles", script, attached=True
         )
         self.assertEqual(
             ["bubblejail", "run", "--wait", "Bottles", "/bin/sh", "-c", script],
-            args,
+            attached_args,
         )
-        self.assertIsNone(input_text)
-        self.assertNotIn("--debug-shell", args)
+        self.assertIsNone(attached_input)
+        self.assertNotIn("--debug-shell", attached_args)
 
-        args, input_text = bubblejail_gpu_probe_invocation(
+        pre_args, pre_input = bubblejail_gpu_probe_invocation(
             gpu, "Bottles", script, attached=False
         )
-        self.assertIn("--debug-shell", args)
-        self.assertNotIn("--wait", args)
-        self.assertEqual(script, input_text)
+        self.assertIn("--debug-shell", pre_args)
+        self.assertNotIn("--wait", pre_args)
+        self.assertEqual(script, pre_input)
+
+    def test_bubblewrap_rejects_implicit_default_gpu(self):
+        with self.assertRaises(RuntimeError):
+            bubblewrap_gpu_args(None)
 
     def test_validate_gpu_info_rejects_invalid_identity(self):
         good = self._info()
