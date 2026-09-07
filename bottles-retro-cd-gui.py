@@ -24,7 +24,11 @@ GLib = _base.GLib
 Gio = _base.Gio
 RETROPC_ROOT = _base.RETROPC_ROOT
 
-from gpu_backend import validate_gpu_probe_output, validate_gpu_runtime  # noqa: E402
+from gpu_backend import (  # noqa: E402
+    bubblejail_gpu_probe_invocation,
+    validate_gpu_probe_output,
+    validate_gpu_runtime,
+)
 from protection_scanner import (  # noqa: E402
     compare_catalog_protection,
     format_scan,
@@ -126,11 +130,13 @@ exit 0
     def _probe_gpu_isolation(self, gpu, *, attached: bool) -> str:
         self.sandbox.ensure_runtime_args_supported()
         script, hidden_nodes = self._gpu_probe_script(gpu)
-        args = ["bubblejail", "run"]
-        if not attached:
-            args += _base.bubblewrap_gpu_args(gpu)
-        args += ["--debug-shell", _base.INSTANCE]
-        proc = _base.run_cmd(args, input_text=script, timeout=40)
+        args, input_text = bubblejail_gpu_probe_invocation(
+            gpu,
+            _base.INSTANCE,
+            script,
+            attached=attached,
+        )
+        proc = _base.run_cmd(args, input_text=input_text, timeout=40)
         if proc.returncode != 0:
             phase = "post-avvio" if attached else "pre-avvio"
             raise RuntimeError(
