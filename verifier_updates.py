@@ -199,12 +199,20 @@ def _tosec_pc_members(members: list[zipfile.ZipInfo]) -> list[zipfile.ZipInfo]:
     return selected
 
 
+def _looks_like_tosec_pack(members: list[zipfile.ZipInfo]) -> bool:
+    for info in members:
+        parts = PurePosixPath(info.filename.replace("\\", "/")).parts[:-1]
+        if any(part.casefold().startswith("tosec") for part in parts):
+            return True
+    return False
+
+
 def _materialise_dat_payload(payload: bytes, destination: Path, source: str) -> int:
     _ensure_private_dir(destination)
     if payload.startswith(b"PK\x03\x04") or payload.startswith(b"PK\x05\x06"):
         with zipfile.ZipFile(io.BytesIO(payload)) as zf:
             members = _safe_zip_members(zf)
-            if source == "tosec":
+            if source == "tosec" and _looks_like_tosec_pack(members):
                 members = _tosec_pc_members(members)
             count = 0
             used: set[str] = set()
