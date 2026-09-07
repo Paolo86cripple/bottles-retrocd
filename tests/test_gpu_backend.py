@@ -5,7 +5,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from gpu_backend import bubblewrap_gpu_args, detect_gpus, gpu_by_pci, mesa_env, parse_vulkan_summary, preferred_gpu
+from gpu_backend import (
+    GPUInfo,
+    bubblewrap_gpu_args,
+    detect_gpus,
+    gpu_by_pci,
+    mesa_env,
+    parse_vulkan_summary,
+    preferred_gpu,
+    validate_gpu_info,
+    validate_gpu_probe_output,
+)
 
 
 class GpuBackendTests(unittest.TestCase):
@@ -22,6 +32,13 @@ class GpuBackendTests(unittest.TestCase):
         card_path = drm / card
         card_path.mkdir(parents=True, exist_ok=True)
         (card_path / "device").symlink_to(dev, target_is_directory=True)
+
+    @staticmethod
+    def _info() -> GPUInfo:
+        return GPUInfo(
+            "0000:03:00.0", "/dev/dri/card1", "/dev/dri/renderD128",
+            "1002", "7550", "amdgpu", "AMD Radeon", False, True, 16 * 1024**3,
+        )
 
     @mock.patch("gpu_backend._pci_name")
     def test_detect_and_prefer_integrated(self, pci_name):
@@ -40,8 +57,7 @@ class GpuBackendTests(unittest.TestCase):
         self.assertEqual([{"vendorID": "0x1002", "deviceID": "0x7550", "deviceName": "AMD Radeon RX"}], devices)
 
     def test_mesa_env_uses_stable_pci_selector(self):
-        from gpu_backend import GPUInfo
-        gpu = GPUInfo("0000:03:00.0", "/dev/dri/card1", "/dev/dri/renderD128", "1002", "7550", "amdgpu", "AMD Radeon", False, True, 16 * 1024**3)
+        gpu = self._info()
         env = mesa_env(gpu)
         self.assertEqual("pci-0000_03_00_0", env["DRI_PRIME"])
         self.assertEqual("1", env["MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE"])
@@ -52,6 +68,73 @@ class GpuBackendTests(unittest.TestCase):
         self.assertIn("/dev/dri/card1", args)
         self.assertIn("/dev/dri/renderD128", args)
         self.assertEqual(2, args.count("dev-bind"))
+
+    def test_bubblewrap_rejects_implicit_default_gpu(self):
+        with self.assertRaises(RuntimeError):
+            bubblewrap_gpu_args(None)
+
+    def test_validate_gpu_info_rejects_invalid_identity(self):
+        good = self._info()
+        invalid = (
+            GPUInfo("bad", good.card_node, good.render_node, good.vendor_id, good.device_id, good.driver, good.name, False, True, None),
+            GPUInfo(good.pci_address, good.card_node, good.render_node, "xyz", good.device_id, good.driver, good.name, False, True, None),
+            GPUInfo(good.pci_address, good.card_node, good.render_node, good.vendor_id, "", good.driver, good.name, False, True, None),
+            GPUInfo(good.pci_address, "/dev/dri/renderD1", good.render_node, good.vendor_id, good.device_id, good.driver, good.name, False, True, None),
+            GPUInfo(good.pci_address, good.card_node, "/dev/dri/card9", good.vendor_id, good.device_id, good.driver, good.name, False, True, None),
+            GPUInfo(good.pci_address, good.card_node, good.render_node, good.vendor_id, good.device_id, "", good.name, False, True, None),
+        )
+        for gpu in invalid:
+            with self.subTest(gpu=gpu):
+                with self.assertRaises(RuntimeError):
+                    validate_gpu_info(gpu)
+
+    def _probe_text(self, *, hidden_visible: bool = False, device: str = "7550", extra_gpu: bool = False) -> str:
+        hidden = "GPU_HIDDEN_NODE_VISIBLE=/dev/dri/card2" if hidden_visible else "GPU_HIDDEN_NODE_OK=/dev/dri/card2"
+        text = f"""GPU_DRI_PRIME=pci-0000_03_00_0
+GPU_SELECTED_NODE_OK=/dev/dri/card1
+GPU_SELECTED_NODE_OK=/dev/dri/renderD128
+{hidden}
+GPU0:
+    vendorID = 0x1002
+    deviceID = 0x{device}
+    deviceName = AMD Radeon RX
+"""
+        if extra_gpu:
+            text += """GPU1:
+    vendorID = 0x1002
+    deviceID = 0x164e
+    deviceName = AMD Radeon Graphics
+"""
+        return text
+
+    def test_probe_validation_accepts_exact_single_gpu(self):
+        actual = validate_gpu_probe_output(
+            self._info(), self._probe_text(), hidden_nodes=["/dev/dri/card2"]
+        )
+        self.assertEqual("AMD Radeon RX", actual["deviceName"])
+
+    def test_probe_validation_rejects_visible_nonselected_node(self):
+        with self.assertRaises(RuntimeError):
+            validate_gpu_probe_output(
+                self._info(), self._probe_text(hidden_visible=True), hidden_nodes=["/dev/dri/card2"]
+            )
+
+    def test_probe_validation_rejects_wrong_vulkan_identity(self):
+        with self.assertRaises(RuntimeError):
+            validate_gpu_probe_output(
+                self._info(), self._probe_text(device="164e"), hidden_nodes=["/dev/dri/card2"]
+            )
+
+    def test_probe_validation_rejects_multiple_vulkan_gpus(self):
+        with self.assertRaises(RuntimeError):
+            validate_gpu_probe_output(
+                self._info(), self._probe_text(extra_gpu=True), hidden_nodes=["/dev/dri/card2"]
+            )
+
+    def test_probe_validation_requires_positive_proof_markers(self):
+        text = self._probe_text().replace("GPU_SELECTED_NODE_OK=/dev/dri/renderD128\n", "")
+        with self.assertRaises(RuntimeError):
+            validate_gpu_probe_output(self._info(), text, hidden_nodes=["/dev/dri/card2"])
 
 
 if __name__ == "__main__":
