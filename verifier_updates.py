@@ -36,10 +36,8 @@ OFFICIAL_UPDATE_HOSTS = frozenset(
 # Redump's official Caddy crawler guard blocks User-Agent values containing
 # tokens such as "bot" on generated download routes. "Bottles..." therefore
 # caused an accidental false positive because it begins with "Bot". Keep the
-# product identifier explicit without any crawler-guard token.
-UPDATE_USER_AGENT = (
-    "RetroCD-Verifier/0.4 (+https://github.com/Paolo86cripple/bottles-retrocd)"
-)
+# entire product identifier free of crawler-guard tokens, including URLs.
+UPDATE_USER_AGENT = "RetroCD-Verifier/0.4"
 
 
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
