@@ -30,7 +30,7 @@ The architecture and runtime paths are suitable for this release candidate. The 
   threads.
 - Bubblejail runtime-argument capability is checked before use.
 - Bottles launch stdout/stderr is retained in the XDG cache directory.
-- Diagnostic log can be copied from the GUI.
+- The Test tab is a cumulative application log for diagnostics and normal operations, and can be copied from the GUI.
 - Unit tests cover whitelist update, backup/restore and unsafe path rejection.
 
 ## GPU selector feature review
@@ -46,7 +46,7 @@ The architecture and runtime paths are suitable for this release candidate. The 
 ## Static review
 
 - Python syntax/AST: PASS.
-- Unit tests: PASS (9/9 with GPU/settings coverage).
+- Unit tests: PASS (19/19, including GPU/settings, bridge, explicit disc sets and multidisc detection).
 - `bash -n run-local.sh`: PASS.
 - No hardcoded `/home/paolo` paths.
 - No `os.system`, `shell=True`, `eval` or dynamic `exec` in the application path.
@@ -65,3 +65,16 @@ The architecture and runtime paths are suitable for this release candidate. The 
 ## rc2 correction
 
 The rc1 assumption that `/sys/class/block/srX/ro == 1` must hold for CDEmu was rejected by real hardware-path testing: VHBA/CDEmu can expose an optical `sr` block device with block-layer `ro=0` while the loaded image is mounted read-only by UDisks2. rc2 therefore validates device identity (CDEmu mapping + block device + SCSI type 5), keeps the filesystem mount fail-closed RO, and makes raw exposure opt-in.
+
+## Multidisc final review candidate
+
+- Archive fidelity: persistent sets contain only absolute references to original files below `retropc`; no CUE/BIN/image file is copied, renamed, rewritten, touched, or symlinked inside the archive tree. Tests compare file content and mtime before/after metadata save.
+- Explicit policy: creating a set starts from the exact selected descriptor (so Disc 1 can always be the anchor). Automatic name grouping is advisory only; live runtime requires an explicit saved set.
+- Runtime isolation: cache filesystems are UDisks2-mounted RO on host and individually `ro-bind` mounted into Bubblejail; the broad `/run/media` tree is never exposed. Only the active CDEmu `/dev/srX` is dev-bound for live swap; cache `/dev/srX` nodes and `/dev/sgX` are not exposed.
+- Swap safety: bridge neutralizes `/mnt/cdemu` to a real empty directory, active CDEmu media is unload/load swapped on the same validated `/dev/srX`, then the selector moves to the pre-registered RO cache mount. Mapping changes fail closed and trigger rollback.
+- Cache cleanup: every cached device mapping is revalidated before unmount/unload; `RemoveDevice` proceeds only while count, suffix ordering, last index, and `/dev/srX` mapping still match GUI-owned devices. Concurrent CDEmu changes abort removal.
+- Lifecycle: the selected CDEmu drive is locked during a live session, set metadata editing is frozen, the GUI polls for Bottles exit and cleans cache automatically in a worker thread, and window close is refused while live Bottles still depends on the cache. Cleanup start and completion/failure are written to the cumulative log.
+- Config privacy: application config directory is `0700`; `config.toml` and `disc-sets.toml` are `0600`.
+- Static checks: Python compile PASS for all application backends, shell syntax PASS, 19/19 unit tests PASS, and no `shell=True`, `os.system`, `eval`, or dynamic `exec` usage found.
+- Residual risk: an abnormal GUI crash/kill during live multidisc can leave temporary host-side CDEmu cache drives mounted until manual cleanup or the next recovery mechanism; normal close/exit paths are covered. No further sysfs/device hardening is attempted because it would add compatibility risk without helping multidisc correctness.
+

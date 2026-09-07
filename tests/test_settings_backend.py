@@ -17,6 +17,7 @@ class SettingsBackendTests(unittest.TestCase):
             self.assertEqual(Path(td) / "bottles-retro-cd" / "config.toml", path)
             self.assertEqual("0000:03:00.0", load_settings()["gpu_pci"])
             self.assertEqual(0o600, stat.S_IMODE(path.stat().st_mode))
+            self.assertEqual(0o700, stat.S_IMODE(path.parent.stat().st_mode))
 
     def test_invalid_config_falls_back_safely(self):
         with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": td}, clear=False):

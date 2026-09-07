@@ -17,6 +17,18 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 from cdemu_backend import CDEmuBackend, DeviceState
+from disc_bridge import DiscBridge
+from disc_sets_backend import (
+    SavedDiscSet,
+    find_saved_set,
+    resolve_disc_set,
+    load_saved_sets,
+    make_new_saved_set,
+    make_saved_set,
+    save_saved_sets,
+    suggest_set_name,
+    upsert_saved_set,
+)
 from gpu_backend import (
     GPUInfo,
     bubblewrap_gpu_args,
@@ -25,6 +37,7 @@ from gpu_backend import (
     parse_vulkan_summary,
     preferred_gpu,
 )
+from multidisc_backend import DiscEntry, DiscSet
 from sandbox_backend import (
     DATA_ROOT,
     EGLLIBRARY_ROOT,
@@ -55,11 +68,21 @@ class Window(Gtk.ApplicationWindow):
         self.sandbox = SandboxBackend(INSTANCE)
         self.devices: list[DeviceState] = []
         self.images: list[Path] = []
+        self.disc_set: DiscSet | None = None
+        self.saved_disc_sets: list[SavedDiscSet] = []
+        self.active_bridge: DiscBridge | None = None
+        self.active_bridge_device_index: int | None = None
+        self.active_bridge_sr = ""
+        self.active_bridge_cache: dict[str, tuple[int, str, str]] = {}
+        self.active_bridge_cache_base_count: int | None = None
         self.gpus: list[GPUInfo] = []
         self.settings = load_settings()
         self.busy = False
         self._ui_thread_id = threading.get_ident()
         self._refreshing_gpus = False
+        self._live_poll_id: int | None = None
+        self._live_cleanup_running = False
+        self.connect("close-request", self.on_close_request)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         root.set_margin_top(12)
@@ -151,6 +174,7 @@ class Window(Gtk.ApplicationWindow):
         grid.attach(Gtk.Label(label="Immagine", xalign=0), 0, 1, 1, 1)
         self.image_model = Gtk.StringList.new([])
         self.image_drop = Gtk.DropDown(model=self.image_model, hexpand=True)
+        self.image_drop.connect("notify::selected", lambda *_: self.refresh_disc_set())
         grid.attach(self.image_drop, 1, 1, 1, 1)
         refresh_img = Gtk.Button(label="Aggiorna")
         refresh_img.connect("clicked", lambda *_: self.refresh_images())
@@ -169,6 +193,68 @@ class Window(Gtk.ApplicationWindow):
         self.eject_btn = Gtk.Button(label="Espelli")
         self.eject_btn.connect("clicked", lambda *_: self.background(self.eject_selected_device))
         actions.append(self.eject_btn)
+
+        mdframe = Gtk.Frame(label="Multidisco")
+        page.append(mdframe)
+        mdbox = self.frame_box(mdframe)
+        mdrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        mdbox.append(mdrow)
+        self.disc_model = Gtk.StringList.new([])
+        self.disc_drop = Gtk.DropDown(model=self.disc_model, hexpand=True)
+        mdrow.append(self.disc_drop)
+        self.disc_prev_btn = Gtk.Button(label="◀ Precedente")
+        self.disc_prev_btn.connect("clicked", lambda *_: self.background(lambda: self.swap_relative_disc(-1)))
+        mdrow.append(self.disc_prev_btn)
+        self.disc_swap_btn = Gtk.Button(label="Cambia disco")
+        self.disc_swap_btn.add_css_class("suggested-action")
+        self.disc_swap_btn.connect("clicked", lambda *_: self.background(self.swap_selected_disc))
+        mdrow.append(self.disc_swap_btn)
+        self.disc_next_btn = Gtk.Button(label="Successivo ▶")
+        self.disc_next_btn.connect("clicked", lambda *_: self.background(lambda: self.swap_relative_disc(1)))
+        mdrow.append(self.disc_next_btn)
+        self.live_multidisc_switch = self.switch_row(
+            mdbox,
+            "Cambio live mentre Bottles è aperto",
+            "Precarica il set su drive CDEmu host-side separati, tutti montati RO e invisibili come device "
+            "alla jail. Wine riceve il cambio reale sul solo /dev/srX attivo; /mnt/cdemu segue il disco "
+            "selezionato tramite il bridge statico già validato.",
+            False,
+        )
+        setrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        mdbox.append(setrow)
+        self.save_disc_set_btn = Gtk.Button(label="Crea set da questo disco")
+        self.save_disc_set_btn.set_tooltip_text(
+            "Se il disco non appartiene ancora a un set, crea un set esplicito partendo solo dal "
+            "descriptor selezionato. Non copia, rinomina o modifica immagini/CUE."
+        )
+        self.save_disc_set_btn.connect("clicked", lambda *_: self.background(self.save_current_disc_set))
+        setrow.append(self.save_disc_set_btn)
+        self.add_disc_to_set_btn = Gtk.Button(label="Aggiungi disco…")
+        self.add_disc_to_set_btn.set_tooltip_text(
+            "Aggiunge al set un descriptor originale anche se si trova in un'altra cartella sotto retropc."
+        )
+        self.add_disc_to_set_btn.connect("clicked", lambda *_: self.choose_disc_for_saved_set())
+        setrow.append(self.add_disc_to_set_btn)
+        self.forget_disc_set_btn = Gtk.Button(label="Dimentica set")
+        self.forget_disc_set_btn.set_tooltip_text(
+            "Elimina solo il metadato del set; i dump originali non vengono toccati."
+        )
+        self.forget_disc_set_btn.connect("clicked", lambda *_: self.background(self.forget_current_disc_set))
+        setrow.append(self.forget_disc_set_btn)
+
+        fidelity = Gtk.Label(
+            label=(
+                "Modalità archivistica: i set salvano soltanto riferimenti ai file originali Redump/TOSEC. "
+                "Nessun file viene spostato, rinominato, copiato o riscritto; cartelle separate sono supportate."
+            ),
+            xalign=0,
+            wrap=True,
+        )
+        fidelity.add_css_class("dim-label")
+        mdbox.append(fidelity)
+
+        self.multidisc_status = Gtk.Label(label="Multidisco: seleziona un'immagine", xalign=0, wrap=True)
+        mdbox.append(self.multidisc_status)
 
         mframe = Gtk.Frame(label="Mount")
         page.append(mframe)
@@ -385,9 +471,9 @@ class Window(Gtk.ApplicationWindow):
 
         intro = Gtk.Label(
             label=(
-                "Questi test non installano nulla e non avviano giochi. Il test CDEmu crea un drive temporaneo, "
-                "lo usa e lo rimuove; il test sandbox apre solo una debug shell Bubblejail automatizzata. "
-                "Il pulsante Avvia Bottles nel tab Sandbox è invece un test operativo esplicito."
+                "Il riquadro sotto è anche il log applicativo cumulativo: registra test, avvii, cambi disco, "
+                "errori e cleanup. I test non installano nulla e non avviano giochi; il test CDEmu crea un drive "
+                "temporaneo, lo usa e lo rimuove, mentre il test sandbox apre solo una debug shell Bubblejail automatizzata."
             ),
             xalign=0,
             wrap=True,
@@ -409,6 +495,16 @@ class Window(Gtk.ApplicationWindow):
         self.test_all_btn.add_css_class("suggested-action")
         self.test_all_btn.connect("clicked", lambda *_: self.background(self.run_all_tests, report=True))
         row.append(self.test_all_btn)
+        self.test_bridge_btn = Gtk.Button(label="Test bridge multidisco")
+        self.test_bridge_btn.connect("clicked", lambda *_: self.background(self.run_disc_bridge_test, report=True))
+        row.append(self.test_bridge_btn)
+
+        row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        page.append(row2)
+        self.test_disc_cache_btn = Gtk.Button(label="Test cache multidisco")
+        self.test_disc_cache_btn.connect("clicked", lambda *_: self.background(self.run_disc_cache_test, report=True))
+        row2.append(self.test_disc_cache_btn)
+
         self.copy_log_btn = Gtk.Button(label="Copia log")
         self.copy_log_btn.connect("clicked", self.copy_test_log)
         row.append(self.copy_log_btn)
@@ -423,7 +519,7 @@ class Window(Gtk.ApplicationWindow):
         self.test_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         scroll.set_child(self.test_view)
         self.test_buffer = self.test_view.get_buffer()
-        self.test_buffer.set_text("Nessun test eseguito.\n")
+        self.test_buffer.set_text("Log applicazione avviato.\n")
 
     def initialize(self):
         try:
@@ -436,9 +532,95 @@ class Window(Gtk.ApplicationWindow):
             self.global_status.set_text("CDEmu non connesso")
             self.set_message(f"Connessione CDEmu fallita: {exc}", True)
         self.reload_whitelist()
+        self.reload_saved_disc_sets()
         self.refresh_gpus()
         self.refresh_all()
         return False
+
+    def on_close_request(self, *_):
+        if self._live_cleanup_running:
+            self.set_message("Pulizia cache multidisco in corso: attendi che termini prima di chiudere la GUI.", True)
+            return True
+        if self.busy:
+            self.set_message("Operazione in corso: attendi che termini prima di chiudere la GUI.", True)
+            return True
+        if self.active_bridge_cache and self.sandbox.running():
+            self.set_message(
+                "Sessione multidisco live attiva: chiudi prima Bottles, così la GUI può smontare "
+                "e rimuovere in sicurezza i drive CDEmu di cache.",
+                True,
+            )
+            return True
+        if self.active_bridge_cache:
+            self._start_live_cleanup()
+            return True
+        if self.cdemu is not None:
+            self.cdemu.close()
+        return False
+
+    def _poll_live_session(self):
+        if not self.active_bridge_cache:
+            self._live_poll_id = None
+            return False
+        if self._live_cleanup_running:
+            self._live_poll_id = None
+            return False
+        if self.sandbox.running():
+            return True
+        if self.busy:
+            return True
+        self._live_poll_id = None
+        self._start_live_cleanup()
+        return False
+
+    def _start_live_cleanup(self):
+        if self._live_cleanup_running or not self.active_bridge_cache:
+            return False
+        if self.sandbox.running():
+            self.set_message("Cleanup cache multidisco rinviato: Bottles/Bubblejail è ancora attivo.", True)
+            return False
+
+        self._live_cleanup_running = True
+        self.set_message("Bottles chiuso: pulizia cache multidisco in corso…")
+        self.set_busy(True)
+
+        def worker():
+            try:
+                warnings = self._cleanup_inactive_live_session()
+                error = None
+            except Exception as exc:
+                warnings = []
+                error = str(exc)
+            GLib.idle_add(self._finish_live_cleanup, warnings, error)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return True
+
+    def _finish_live_cleanup(self, warnings, error):
+        self._live_cleanup_running = False
+        self.set_busy(False)
+        self.device_drop.set_sensitive(True)
+        self.refresh_devices()
+        if error:
+            self.set_message(f"Cleanup cache multidisco fallito: {error}", True)
+        elif warnings:
+            self.set_message("Cleanup cache multidisco: " + "; ".join(warnings), True)
+        else:
+            self.set_message("Sessione multidisco terminata: cache CDEmu ripulita.")
+        return False
+
+    def _ensure_live_poll(self):
+        if self._live_poll_id is None and not self._live_cleanup_running:
+            self._live_poll_id = GLib.timeout_add_seconds(3, self._poll_live_session)
+
+    def append_log(self, text: str, error: bool = False):
+        if not text or not hasattr(self, "test_buffer"):
+            return
+        stamp = time.strftime("%H:%M:%S")
+        prefix = "ERROR · " if error else ""
+        payload = str(text).rstrip("\n")
+        end = self.test_buffer.get_end_iter()
+        self.test_buffer.insert(end, f"[{stamp}] {prefix}{payload}\n")
 
     def set_message(self, text: str, error: bool = False):
         self.message.set_text(text)
@@ -446,6 +628,7 @@ class Window(Gtk.ApplicationWindow):
             self.message.add_css_class("error")
         else:
             self.message.remove_css_class("error")
+        self.append_log(text, error)
 
     def ui_get(self, getter):
         """Read GTK state on the GTK main thread, even when called by a worker."""
@@ -475,10 +658,17 @@ class Window(Gtk.ApplicationWindow):
         self.busy = busy
         for widget in (
             self.load_btn, self.eject_btn, self.launch_btn,
+            self.device_drop, self.image_drop, self.disc_drop, self.gpu_drop,
+            self.disc_prev_btn, self.disc_swap_btn, self.disc_next_btn,
+            self.save_disc_set_btn, self.add_disc_to_set_btn, self.forget_disc_set_btn,
             self.gpu_refresh_btn, self.gpu_test_btn,
-            self.test_cdemu_btn, self.test_sandbox_btn, self.test_integration_btn, self.test_all_btn,
+            self.test_cdemu_btn, self.test_sandbox_btn, self.test_integration_btn, self.test_all_btn, self.test_bridge_btn,
+            self.test_disc_cache_btn,
         ):
             widget.set_sensitive(not busy)
+        if not busy:
+            self.refresh_disc_set()
+            self.refresh_devices()
 
     def selected_gpu(self) -> GPUInfo | None:
         if not self.gpus:
@@ -637,7 +827,7 @@ exit 0
             return
         self.set_busy(True)
         if report:
-            self.test_buffer.set_text("Test in esecuzione…\n")
+            self.append_log("Test in esecuzione…")
 
         def worker():
             try:
@@ -651,13 +841,9 @@ exit 0
     def finish_background(self, value, error, report):
         self.set_busy(False)
         if error:
-            self.set_message(error, True)
-            if report:
-                self.test_buffer.set_text(f"FAIL: {error}\n")
+            self.set_message(f"FAIL: {error}" if report else error, True)
         else:
             self.set_message(str(value or "Operazione completata."))
-            if report:
-                self.test_buffer.set_text(str(value) + ("\n" if value and not str(value).endswith("\n") else ""))
         self.refresh_all()
         return False
 
@@ -689,6 +875,169 @@ exit 0
         self.image_model.splice(0, self.image_model.get_n_items(), labels)
         if self.images:
             self.image_drop.set_selected(min(old, len(self.images) - 1) if old != Gtk.INVALID_LIST_POSITION else 0)
+        self.refresh_disc_set()
+        return False
+
+    def reload_saved_disc_sets(self):
+        try:
+            self.saved_disc_sets = load_saved_sets(RETROPC_ROOT)
+        except Exception as exc:
+            self.saved_disc_sets = []
+            self.set_message(str(exc), True)
+        return False
+
+    def refresh_disc_set(self):
+        if not self.images:
+            self.disc_set = None
+            self.disc_model.splice(0, self.disc_model.get_n_items(), [])
+            self.multidisc_status.set_text("Multidisco: nessuna immagine")
+            self.disc_drop.set_sensitive(False)
+            self.live_multidisc_switch.set_sensitive(False)
+            self.forget_disc_set_btn.set_sensitive(False)
+            return False
+        try:
+            selected = self.selected_image()
+            saved = find_saved_set(selected, self.saved_disc_sets)
+            self.save_disc_set_btn.set_label(
+                "Salva set" if saved is not None else "Crea set da questo disco"
+            )
+            disc_set = resolve_disc_set(
+                selected, self.images, RETROPC_ROOT, self.saved_disc_sets
+            )
+            self.disc_set = disc_set
+            self.disc_model.splice(0, self.disc_model.get_n_items(), [entry.label for entry in disc_set.discs])
+            index = next((i for i, entry in enumerate(disc_set.discs) if entry.image == selected), 0)
+            self.disc_drop.set_selected(index)
+            multi = disc_set.multidisc
+            live_session = bool(self.active_bridge_cache and self.sandbox.running())
+            self.disc_drop.set_sensitive(multi and not self.busy)
+            self.live_multidisc_switch.set_sensitive(multi and not self.sandbox.running() and not self.busy)
+            self.save_disc_set_btn.set_sensitive(not live_session and not self.busy)
+            self.add_disc_to_set_btn.set_sensitive(not live_session and not self.busy)
+            self.forget_disc_set_btn.set_sensitive(saved is not None and not live_session and not self.busy)
+            if saved is not None:
+                self.multidisc_status.set_text(
+                    f'Set salvato: "{saved.name}" · {len(disc_set.discs)} supporti · ' 
+                    "percorsi originali Redump/TOSEC preservati. "
+                    "Live: cache host-side RO + un solo /dev/srX attivo per Wine."
+                )
+            elif multi:
+                numbers = ", ".join(str(entry.number) for entry in disc_set.discs)
+                self.multidisc_status.set_text(
+                    f"Rilevamento automatico: {len(disc_set.discs)} supporti · dischi {numbers}. "
+                    "Il rilevamento è solo un suggerimento: 'Crea set da questo disco' parte dal solo descriptor selezionato "
+                    "e poi puoi aggiungere gli altri supporti esplicitamente, senza modificare i dump."
+                )
+            else:
+                self.multidisc_status.set_text(
+                    "Multidisco: nessun set salvato/correlato. Puoi salvare questo disco come nuovo set "
+                    "e aggiungere gli altri descriptor dalle loro cartelle originali."
+                )
+        except Exception as exc:
+            self.disc_set = None
+            self.disc_model.splice(0, self.disc_model.get_n_items(), [])
+            self.live_multidisc_switch.set_sensitive(False)
+            self.forget_disc_set_btn.set_sensitive(False)
+            self.multidisc_status.set_text(f"Multidisco: errore {exc}")
+        return False
+
+    def save_current_disc_set(self):
+        selected = self.selected_image()
+        existing = find_saved_set(selected, self.saved_disc_sets)
+        if existing is None:
+            # Persistenza archivistica esplicita: l'autodetection non viene mai
+            # trasformata implicitamente in un set salvato. Si parte dal solo
+            # descriptor selezionato (tipicamente Disc 1) e si aggiungono poi
+            # gli altri supporti dai rispettivi percorsi originali.
+            saved = make_new_saved_set(selected, RETROPC_ROOT)
+        else:
+            saved = make_saved_set(
+                existing.name, [entry.image for entry in existing.discs], RETROPC_ROOT
+            )
+            saved = SavedDiscSet(existing.set_id, saved.name, saved.discs)
+        self.saved_disc_sets = upsert_saved_set(self.saved_disc_sets, saved)
+        path = save_saved_sets(self.saved_disc_sets, RETROPC_ROOT)
+        GLib.idle_add(self.refresh_disc_set)
+        return (
+            f'Set "{saved.name}" salvato: {len(saved.discs)} supporti. ' 
+            f"Metadati: {path}. Dump originali non modificati."
+        )
+
+    def choose_disc_for_saved_set(self):
+        try:
+            selected = self.selected_image()
+        except Exception as exc:
+            self.set_message(str(exc), True)
+            return
+        dialog = Gtk.FileChooserNative.new(
+            "Aggiungi descriptor originale al set",
+            self,
+            Gtk.FileChooserAction.OPEN,
+            "_Aggiungi",
+            "_Annulla",
+        )
+        if RETROPC_ROOT.exists():
+            dialog.set_current_folder(Gio.File.new_for_path(str(RETROPC_ROOT)))
+
+        def response(dlg, response_id):
+            try:
+                if response_id != Gtk.ResponseType.ACCEPT:
+                    return
+                chosen_file = dlg.get_file()
+                path = Path(chosen_file.get_path()).resolve(strict=True) if chosen_file and chosen_file.get_path() else None
+                if path is None:
+                    raise RuntimeError("Nessun file selezionato.")
+                existing = find_saved_set(selected, self.saved_disc_sets)
+                if existing is None:
+                    base = make_saved_set(suggest_set_name(selected), [selected], RETROPC_ROOT)
+                else:
+                    base = existing
+                paths = [d.image for d in base.discs]
+                if path not in paths:
+                    paths.append(path)
+                rebuilt = make_saved_set(base.name, paths, RETROPC_ROOT)
+                rebuilt = SavedDiscSet(base.set_id, rebuilt.name, rebuilt.discs)
+                self.saved_disc_sets = upsert_saved_set(self.saved_disc_sets, rebuilt)
+                cfg = save_saved_sets(self.saved_disc_sets, RETROPC_ROOT)
+                self.refresh_images()
+                self.set_message(
+                    f'Disco aggiunto al set "{rebuilt.name}". Metadati: {cfg}. File originale non modificato.'
+                )
+            except Exception as exc:
+                self.set_message(str(exc), True)
+            finally:
+                dlg.destroy()
+
+        dialog.connect("response", response)
+        dialog.show()
+
+    def forget_current_disc_set(self):
+        selected = self.selected_image()
+        existing = find_saved_set(selected, self.saved_disc_sets)
+        if existing is None:
+            return "Nessun set salvato associato all'immagine selezionata."
+        self.saved_disc_sets = [s for s in self.saved_disc_sets if s.set_id != existing.set_id]
+        path = save_saved_sets(self.saved_disc_sets, RETROPC_ROOT)
+        GLib.idle_add(self.refresh_disc_set)
+        return (
+            f'Set "{existing.name}" dimenticato ({path}). ' 
+            "Nessun dump, CUE o directory originale è stato modificato."
+        )
+
+    def selected_disc_entry(self) -> DiscEntry:
+        if self.disc_set is None or not self.disc_set.discs:
+            raise RuntimeError("Nessun set multidisco disponibile.")
+        idx = self.ui_get(self.disc_drop.get_selected)
+        if idx == Gtk.INVALID_LIST_POSITION or idx >= len(self.disc_set.discs):
+            idx = 0
+        return self.disc_set.discs[idx]
+
+    def _select_image_path(self, image: Path):
+        for idx, candidate in enumerate(self.images):
+            if candidate == image:
+                self.image_drop.set_selected(idx)
+                break
+        self.refresh_disc_set()
         return False
 
     def refresh_devices(self):
@@ -701,8 +1050,25 @@ exit 0
         try:
             self.devices = self.cdemu.devices()
             self.device_model.splice(0, self.device_model.get_n_items(), [d.title for d in self.devices])
+            live_locked = bool(
+                self.active_bridge_cache and self.sandbox.running() and self.active_bridge_device_index is not None
+            )
             if self.devices:
-                self.device_drop.set_selected(min(old, len(self.devices) - 1) if old != Gtk.INVALID_LIST_POSITION else 0)
+                if live_locked:
+                    active_pos = next(
+                        (i for i, dev in enumerate(self.devices) if dev.index == self.active_bridge_device_index),
+                        None,
+                    )
+                    if active_pos is None:
+                        raise RuntimeError(
+                            f"Device CDEmu live #{self.active_bridge_device_index} non più presente."
+                        )
+                    self.device_drop.set_selected(active_pos)
+                else:
+                    self.device_drop.set_selected(
+                        min(old, len(self.devices) - 1) if old != Gtk.INVALID_LIST_POSITION else 0
+                    )
+            self.device_drop.set_sensitive(not live_locked)
             self.refresh_status()
         except Exception as exc:
             self.cdemu_status.set_text(f"CDEmu: errore {exc}")
@@ -863,7 +1229,7 @@ exit 0
         start, end = self.test_buffer.get_bounds()
         text = self.test_buffer.get_text(start, end, True)
         self.get_clipboard().set(text)
-        self.set_message("Log dei test copiato negli appunti.")
+        self.set_message("Log applicazione copiato negli appunti.")
 
     def raw_changed(self, *_):
         self.sg_switch.set_sensitive(self.raw_switch.get_active())
@@ -1046,32 +1412,330 @@ exit 0
         self.apply_options(d.index)
         return f"Opzioni applicate a device #{d.index}."
 
-    def load_selected_image(self):
+    def _bridge_neutral_dir(self) -> Path:
+        path = self.sandbox.private_home / ".cache" / "bottles-retro-cd" / "empty-disc"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _make_disc_bridge(self) -> DiscBridge:
+        return DiscBridge(
+            INSTANCE,
+            private_home=self.sandbox.private_home,
+            neutral_dir=self._bridge_neutral_dir(),
+            media_root=Path("/run/media") / getpass.getuser(),
+        )
+
+    def _running_bridge(self, device_index: int) -> DiscBridge:
+        if not self.sandbox.running():
+            raise RuntimeError("Bubblejail/Bottles non risulta attivo.")
+        bridge = self.active_bridge
+        if bridge is None or not bridge.alive():
+            self.active_bridge = None
+            raise RuntimeError(
+                "Bottles è attivo senza bridge multidisco. Chiudilo e riavvialo con "
+                "'Cambio live mentre Bottles è aperto' abilitato."
+            )
+        if self.active_bridge_device_index != device_index:
+            raise RuntimeError(
+                f"Il bridge è associato al device CDEmu #{self.active_bridge_device_index}, "
+                f"non al device #{device_index}."
+            )
+        return bridge
+
+    @staticmethod
+    def _disc_cache_key(image: Path) -> str:
+        return str(image.resolve(strict=False))
+
+    def _cleanup_disc_cache(
+        self,
+        cache: dict[str, tuple[int, str, str]],
+        base_count: int | None,
+    ) -> list[str]:
+        """Unmount/unload cached media and remove appended CDEmu devices when safe.
+
+        RemoveDevice always removes the last device. We therefore only remove
+        devices when the current device count still exactly matches the suffix
+        this controller created. If another CDEmu client changed the device list,
+        cached devices are unloaded but left present rather than risking removal
+        of somebody else's drive.
+        """
+        lines: list[str] = []
+        if not self.cdemu or not cache:
+            return lines
+
+        entries = sorted(cache.values(), key=lambda item: item[0], reverse=True)
+        safe_entries: list[tuple[int, str, str]] = []
+        for index, sr, mount in entries:
+            try:
+                mapped_sr, _mapped_sg = self.cdemu.mapping(index)
+            except Exception as exc:
+                lines.append(f"mapping cache #{index} non verificabile: {exc}")
+                continue
+            if sr and mapped_sr != sr:
+                lines.append(
+                    f"cache #{index} non toccata: mapping cambiato {sr} → {mapped_sr}"
+                )
+                continue
+            safe_entries.append((index, sr, mount))
+
+        for index, sr, _mount in safe_entries:
+            try:
+                if sr:
+                    self.unmount(sr)
+            except Exception as exc:
+                lines.append(f"unmount cache #{index}: {exc}")
+            try:
+                loaded, _files = self.cdemu.status(index)
+                if loaded:
+                    self.cdemu.unload(index)
+                    self.cdemu.wait_loaded(index, False)
+            except Exception as exc:
+                lines.append(f"unload cache #{index}: {exc}")
+
+        if len(safe_entries) != len(entries):
+            lines.append("device cache non rimossi: uno o più mapping non sono più quelli creati dalla GUI")
+            return lines
+        if base_count is None:
+            lines.append("device cache lasciati vuoti: base count sconosciuto")
+            return lines
+
+        expected = base_count + len(cache)
+        current = self.cdemu.number_of_devices()
+        expected_indices = list(range(base_count, expected))
+        actual_indices = sorted(index for index, _sr, _mount in cache.values())
+        if current != expected or actual_indices != expected_indices:
+            lines.append(
+                f"device cache lasciati vuoti per sicurezza: count={current}, atteso={expected}, "
+                f"indici={actual_indices}"
+            )
+            return lines
+
+        owned = {index: sr for index, sr, _mount in safe_entries}
+        while owned:
+            current = self.cdemu.number_of_devices()
+            expected_current = base_count + len(owned)
+            if current != expected_current:
+                lines.append(
+                    f"rimozione cache interrotta: count={current}, atteso={expected_current}"
+                )
+                break
+            last_index = current - 1
+            expected_sr = owned.get(last_index)
+            if expected_sr is None:
+                lines.append(
+                    f"rimozione cache interrotta: last device #{last_index} non appartiene alla GUI"
+                )
+                break
+            try:
+                mapped_sr, _mapped_sg = self.cdemu.mapping(last_index)
+            except Exception as exc:
+                lines.append(f"rimozione cache interrotta: mapping #{last_index}: {exc}")
+                break
+            if expected_sr and mapped_sr != expected_sr:
+                lines.append(
+                    f"rimozione cache interrotta: mapping #{last_index} cambiato {expected_sr} → {mapped_sr}"
+                )
+                break
+
+            previous = current
+            self.cdemu.remove_last_device()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                now = self.cdemu.number_of_devices()
+                if now < previous:
+                    owned.pop(last_index, None)
+                    break
+                time.sleep(0.1)
+            else:
+                lines.append("timeout rimuovendo un device cache")
+                break
+        return lines
+
+    def _cleanup_inactive_live_session(self) -> list[str]:
+        if not self.active_bridge_cache:
+            return []
+        if self.sandbox.running():
+            return ["cleanup non eseguito: Bottles/Bubblejail è nuovamente attivo"]
+        lines = self._cleanup_disc_cache(
+            dict(self.active_bridge_cache), self.active_bridge_cache_base_count
+        )
+        if self.active_bridge is not None:
+            self.active_bridge.stop()
+        self.active_bridge = None
+        self.active_bridge_device_index = None
+        self.active_bridge_sr = ""
+        self.active_bridge_cache = {}
+        self.active_bridge_cache_base_count = None
+        return lines
+
+    def _prepare_disc_cache(
+        self, disc_set: DiscSet
+    ) -> tuple[dict[str, tuple[int, str, str]], int]:
         if not self.cdemu:
             raise RuntimeError("CDEmu non connesso.")
-        d = self.selected_device()
-        if d.loaded:
-            self.unmount(d.sr_path)
-            self.cdemu.unload(d.index)
-            self.cdemu.wait_loaded(d.index, False)
-        image = self.selected_image()
-        self.cdemu.load(d.index, image)
-        self.cdemu.wait_loaded(d.index, True)
-        self.apply_options(d.index)
-        sr, _sg = self.cdemu.wait_mapping(d.index)
+        if not disc_set.multidisc:
+            raise RuntimeError("La cache live richiede un set multidisco.")
+
+        base_count = self.cdemu.number_of_devices()
+        cache: dict[str, tuple[int, str, str]] = {}
+        try:
+            for entry in disc_set.discs:
+                index = self.cdemu.add_device()
+                pending = f"__pending__:{index}"
+                cache[pending] = (index, "", "")
+                sr, _sg = self.cdemu.wait_mapping(index)
+                cache[pending] = (index, sr, "")
+                self.cdemu.load(index, entry.image)
+                self.cdemu.wait_loaded(index, True)
+                self.apply_options(index)
+                self.validate_cdemu_optical_device(sr)
+                mount = self.ensure_ro_mount(sr)
+                target, ro = self.mount_info(sr)
+                if not target or not ro or target != mount:
+                    raise RuntimeError(
+                        f"Cache Disco {entry.number}: mount RO non verificato per {sr}."
+                    )
+                del cache[pending]
+                cache[self._disc_cache_key(entry.image)] = (index, sr, mount)
+            if len(cache) != len(disc_set.discs):
+                raise RuntimeError("Cache multidisco incompleta.")
+            return cache, base_count
+        except Exception:
+            self._cleanup_disc_cache(cache, base_count)
+            raise
+
+    def _cache_mount_for(self, image: Path) -> str:
+        item = self.active_bridge_cache.get(self._disc_cache_key(image))
+        if item is None:
+            raise RuntimeError(f"Il disco {image.name} non è presente nella cache live.")
+        _index, sr, mount = item
+        target, ro = self.mount_info(sr)
+        if not target or not ro or target != mount:
+            raise RuntimeError(
+                f"Il mount cache per {image.name} non è più disponibile RO: {mount}."
+            )
+        return mount
+
+    def _load_media(self, index: int, image: Path, *, mount_required: bool) -> tuple[str, str | None]:
+        if not self.cdemu:
+            raise RuntimeError("CDEmu non connesso.")
+        self.cdemu.load(index, image)
+        self.cdemu.wait_loaded(index, True)
+        self.apply_options(index)
+        sr, _sg = self.cdemu.wait_mapping(index)
+        self.validate_cdemu_optical_device(sr)
+        if mount_required:
+            return sr, self.ensure_ro_mount(sr)
+        return sr, None
+
+    def swap_to_image(self, image: Path) -> str:
+        if not self.cdemu:
+            raise RuntimeError("CDEmu non connesso.")
+        image = image.resolve(strict=True)
+        if not image.is_relative_to(RETROPC_ROOT.resolve(strict=False)):
+            raise RuntimeError("Immagine fuori dalla directory retropc autorizzata.")
+
+        d = self.cdemu.device_state(self.selected_device().index)
+        running = self.sandbox.running()
+        if not running and self.active_bridge_cache:
+            self._cleanup_inactive_live_session()
+        bridge: DiscBridge | None = None
+        old_image = Path(d.filenames[0]).resolve(strict=False) if d.loaded and d.filenames else None
+        old_sr = d.sr_path
         udisks_on = self.ui_get(self.udisks_switch.get_active)
-        if udisks_on:
-            target = self.ensure_ro_mount(sr)
-            return f"Caricata {image.name}; mount RO: {target}"
-        return f"Caricata {image.name}; UDisks2 OFF."
+        mount_required = udisks_on
+        old_cache_mount: str | None = None
+        new_cache_mount: str | None = None
+
+        if running:
+            bridge = self._running_bridge(d.index)
+            new_cache_mount = self._cache_mount_for(image)
+            if old_image is not None:
+                old_cache_mount = self._cache_mount_for(old_image)
+            bridge.neutralize()
+
+        try:
+            if d.loaded:
+                self.unmount(d.sr_path)
+                self.cdemu.unload(d.index)
+                self.cdemu.wait_loaded(d.index, False)
+
+            sr, target = self._load_media(d.index, image, mount_required=mount_required)
+            if running:
+                if not self.active_bridge_sr:
+                    self.active_bridge_sr = old_sr
+                if sr != self.active_bridge_sr:
+                    raise RuntimeError(
+                        f"Il mapping CDEmu è cambiato durante lo swap: {self.active_bridge_sr} → {sr}. "
+                        "La jail mantiene volutamente il solo device originale."
+                    )
+                if new_cache_mount is None:
+                    raise RuntimeError("Mount cache del nuovo disco assente.")
+                bridge.set_target(Path(new_cache_mount))
+
+            GLib.idle_add(self._select_image_path, image)
+            if target:
+                return f"Disco cambiato: {image.name} · {sr} · mount RO {target}"
+            return f"Disco cambiato: {image.name} · {sr} · UDisks2 OFF"
+        except Exception as primary:
+            rollback = ""
+            try:
+                current = self.cdemu.device_state(d.index)
+                if current.loaded:
+                    try:
+                        self.unmount(current.sr_path)
+                    except Exception:
+                        pass
+                    self.cdemu.unload(d.index)
+                    self.cdemu.wait_loaded(d.index, False)
+                if old_image is not None and old_image.exists():
+                    restored_sr, restored_mount = self._load_media(
+                        d.index, old_image, mount_required=mount_required
+                    )
+                    if running and bridge is not None:
+                        if restored_sr != self.active_bridge_sr:
+                            raise RuntimeError(
+                                f"rollback mapping inatteso: {restored_sr} != {self.active_bridge_sr}"
+                            )
+                        if old_cache_mount:
+                            bridge.set_target(Path(old_cache_mount))
+                        else:
+                            bridge.neutralize()
+                    rollback = " Il disco precedente è stato ripristinato."
+                elif running and bridge is not None:
+                    bridge.neutralize()
+            except Exception as restore_exc:
+                rollback = f" Rollback non riuscito: {restore_exc}"
+            raise RuntimeError(f"Cambio disco fallito: {primary}.{rollback}") from primary
+
+    def load_selected_image(self):
+        return self.swap_to_image(self.selected_image())
+
+    def swap_selected_disc(self):
+        return self.swap_to_image(self.selected_disc_entry().image)
+
+    def swap_relative_disc(self, delta: int):
+        if self.disc_set is None or len(self.disc_set.discs) < 2:
+            raise RuntimeError("Nessun set multidisco rilevato.")
+        idx = self.ui_get(self.disc_drop.get_selected)
+        if idx == Gtk.INVALID_LIST_POSITION or idx >= len(self.disc_set.discs):
+            idx = 0
+        idx = (idx + delta) % len(self.disc_set.discs)
+        return self.swap_to_image(self.disc_set.discs[idx].image)
 
     def eject_selected_device(self):
         if not self.cdemu:
             raise RuntimeError("CDEmu non connesso.")
-        d = self.selected_device()
+        d = self.cdemu.device_state(self.selected_device().index)
+        if self.sandbox.running():
+            bridge = self._running_bridge(d.index)
+            bridge.neutralize()
+        elif self.active_bridge_cache:
+            self._cleanup_inactive_live_session()
         self.unmount(d.sr_path)
-        self.cdemu.unload(d.index)
-        self.cdemu.wait_loaded(d.index, False)
+        if d.loaded:
+            self.cdemu.unload(d.index)
+            self.cdemu.wait_loaded(d.index, False)
         return f"Device #{d.index} espulso."
 
     def runtime_bubblejail_args(
@@ -1084,6 +1748,7 @@ exit 0
         raw_on: bool,
         sg_on: bool,
         gpu: GPUInfo | None,
+        bridge: DiscBridge | None = None,
     ) -> list[str]:
         args = ["/usr/bin/bubblejail", "run"]
         args += bubblewrap_gpu_args(gpu)
@@ -1096,7 +1761,9 @@ exit 0
                 actual = resolv
             if actual != resolv:
                 args += ["--debug-bwrap-args", "ro-bind", str(actual), str(actual)]
-        if mount and expose_mount:
+        if bridge is not None:
+            args += bridge.bubblewrap_args()
+        elif mount and expose_mount:
             args += [
                 "--debug-bwrap-args", "dir", JAIL_CD_TARGET,
                 "--debug-bwrap-args", "ro-bind", mount, JAIL_CD_TARGET,
@@ -1111,6 +1778,12 @@ exit 0
 
     def launch_bottles(self):
         self.sandbox.ensure_runtime_args_supported()
+        stale = self._cleanup_inactive_live_session()
+        if stale:
+            GLib.idle_add(
+                self.set_message,
+                "Pulizia cache multidisco precedente: " + "; ".join(stale),
+            )
         audit = self.sandbox.audit()
         if audit.network_persistent:
             raise RuntimeError(
@@ -1126,26 +1799,40 @@ exit 0
                 "cambiare rete o permessi CD."
             )
 
-        network_on, udisks_on, expose_mount, raw_on, sg_on = self.ui_get(lambda: (
+        network_on, udisks_on, expose_mount, raw_on, sg_on, live_multidisc_on = self.ui_get(lambda: (
             self.network_switch.get_active(),
             self.udisks_switch.get_active(),
             self.expose_mount_switch.get_active(),
             self.raw_switch.get_active(),
             self.sg_switch.get_active(),
+            self.live_multidisc_switch.get_active(),
         ))
 
-        # Il CD è opzionale. Questo permette, per esempio, di aprire Bottles con
-        # rete temporanea ON per scaricare un runner senza concedere device ottici.
         d: DeviceState | None = None
         mount: str | None = None
+        launch_set: DiscSet | None = None
         try:
-            candidate = self.selected_device()
+            candidate = self.cdemu.device_state(self.selected_device().index) if self.cdemu else None
         except RuntimeError:
             candidate = None
 
         if candidate is not None and candidate.loaded:
             d = candidate
             self.apply_options(d.index)
+            if d.filenames:
+                active_image = Path(d.filenames[0]).resolve(strict=False)
+                if live_multidisc_on:
+                    saved = find_saved_set(active_image, self.saved_disc_sets)
+                    if saved is None:
+                        raise RuntimeError(
+                            "Il multidisco live richiede un set esplicito salvato contenente il disco attivo. "
+                            "L'autodetection non viene usata come policy runtime."
+                        )
+                    launch_set = saved.to_disc_set()
+                else:
+                    launch_set = resolve_disc_set(
+                        active_image, self.images, RETROPC_ROOT, self.saved_disc_sets
+                    )
 
             if udisks_on:
                 if not d.sr_path:
@@ -1157,34 +1844,91 @@ exit 0
                     raise RuntimeError(f"Il mount {target} è RW.")
                 mount = target if ro else None
 
-        gpu = self.selected_gpu()
-        args = self.runtime_bubblejail_args(
-            d, mount, network_on=network_on, expose_mount=expose_mount, raw_on=raw_on,
-            sg_on=sg_on, gpu=gpu,
-        )
-
-        log_dir = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "bottles-retro-cd"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / "bottles-launch.log"
-        with log_path.open("ab") as log_fh:
-            proc = subprocess.Popen(
-                args,
-                start_new_session=True,
-                stdout=log_fh,
-                stderr=subprocess.STDOUT,
-            )
-        time.sleep(0.35)
-        if proc.poll() is not None:
+        if live_multidisc_on and d is None:
+            raise RuntimeError("Il multidisco live richiede un disco CDEmu attivo appartenente a un set salvato.")
+        if live_multidisc_on and (launch_set is None or not launch_set.multidisc):
+            raise RuntimeError("Il set salvato deve contenere almeno due supporti per il multidisco live.")
+        live_multidisc = bool(live_multidisc_on)
+        if live_multidisc and (not udisks_on or not expose_mount or not mount):
             raise RuntimeError(
-                f"Bubblejail/Bottles è terminato subito con rc={proc.returncode}. "
-                f"Log: {log_path}"
+                "Il multidisco live richiede UDisks2 RO e 'Esporre mount RO come /mnt/cdemu'."
             )
+
+        bridge: DiscBridge | None = None
+        cache: dict[str, tuple[int, str, str]] = {}
+        cache_base_count: int | None = None
+        if live_multidisc:
+            cache, cache_base_count = self._prepare_disc_cache(launch_set)
+            if not d.filenames:
+                self._cleanup_disc_cache(cache, cache_base_count)
+                raise RuntimeError("Immagine attiva non determinabile per il bridge multidisco.")
+            current_image = Path(d.filenames[0]).resolve(strict=False)
+            current_item = cache.get(self._disc_cache_key(current_image))
+            if current_item is None:
+                self._cleanup_disc_cache(cache, cache_base_count)
+                raise RuntimeError(
+                    f"Il disco attivo {current_image.name} non appartiene alla cache del set rilevato."
+                )
+            bridge = self._make_disc_bridge()
+            bridge.start(
+                Path(current_item[2]),
+                [Path(item[2]) for item in cache.values()],
+            )
+
+        gpu = self.selected_gpu()
+        effective_raw = raw_on or live_multidisc
+        effective_sg = sg_on and raw_on
+        try:
+            args = self.runtime_bubblejail_args(
+                d, mount, network_on=network_on, expose_mount=expose_mount, raw_on=effective_raw,
+                sg_on=effective_sg, gpu=gpu, bridge=bridge,
+            )
+
+            log_dir = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "bottles-retro-cd"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "bottles-launch.log"
+            with log_path.open("ab") as log_fh:
+                proc = subprocess.Popen(
+                    args,
+                    start_new_session=True,
+                    stdout=log_fh,
+                    stderr=subprocess.STDOUT,
+                )
+            time.sleep(0.35)
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"Bubblejail/Bottles è terminato subito con rc={proc.returncode}. "
+                    f"Log: {log_path}"
+                )
+        except Exception:
+            if bridge is not None:
+                bridge.stop()
+            if cache:
+                self._cleanup_disc_cache(cache, cache_base_count)
+            raise
+
+        if bridge is not None and d is not None:
+            self.active_bridge = bridge
+            self.active_bridge_device_index = d.index
+            self.active_bridge_sr = d.sr_path
+            self.active_bridge_cache = cache
+            self.active_bridge_cache_base_count = cache_base_count
+            self.device_drop.set_sensitive(False)
+            GLib.idle_add(self._ensure_live_poll)
+        else:
+            self.active_bridge = None
+            self.active_bridge_device_index = None
+            self.active_bridge_sr = ""
+            self.active_bridge_cache = {}
+            self.active_bridge_cache_base_count = None
 
         cd_state = (
             f"{d.sr_path}{' · ' + mount if mount else ''}"
             if d is not None
             else "nessun CD"
         )
+        if live_multidisc:
+            cd_state += f" · multidisco live · cache RO {len(cache)}/{len(launch_set.discs)}"
         gpu_state = gpu.label if gpu is not None else "Mesa default"
         return (
             f"Bottles avviato · GPU {gpu_state} · rete {'ON' if network_on else 'OFF'} · {cd_state} · "
@@ -1395,12 +2139,154 @@ rm -f {q(JAIL_CD_TARGET + '/.integration-write-test')} 2>/dev/null
                     lines.append(f"[WARN] cleanup RemoveDevice: {exc}")
         return "\n".join(lines)
 
+    def run_disc_cache_test(self):
+        if not self.cdemu:
+            raise RuntimeError("CDEmu non connesso.")
+        if self.sandbox.running():
+            raise RuntimeError("Chiudi Bottles/Bubblejail prima del test cache multidisco.")
+
+        image = self.selected_image()
+        disc_set = resolve_disc_set(
+            image, self.images, RETROPC_ROOT, self.saved_disc_sets
+        )
+        if not disc_set.multidisc:
+            raise RuntimeError(f"Nessun set multidisco rilevato per {image.name}.")
+
+        lines = [
+            f"[INFO] set multidisco: {len(disc_set.discs)} supporti",
+            "[INFO] " + ", ".join(f"Disc {entry.number}={entry.image.name}" for entry in disc_set.discs),
+        ]
+        cache: dict[str, tuple[int, str, str]] = {}
+        base_count: int | None = None
+        bridge: DiscBridge | None = None
+        try:
+            cache, base_count = self._prepare_disc_cache(disc_set)
+            if len(cache) != len(disc_set.discs):
+                raise RuntimeError(
+                    f"Cache incompleta: {len(cache)}/{len(disc_set.discs)} supporti."
+                )
+            mounts: list[Path] = []
+            for entry in disc_set.discs:
+                item = cache.get(self._disc_cache_key(entry.image))
+                if item is None:
+                    raise RuntimeError(f"Disco {entry.number} assente dalla cache.")
+                index, sr, mount = item
+                target, ro = self.mount_info(sr)
+                if target != mount or not ro:
+                    raise RuntimeError(f"Disco {entry.number}: mount cache non più RO.")
+                mounts.append(Path(mount))
+                lines.append(
+                    f"[PASS] Disco {entry.number}: cache device #{index} · {sr} · mount RO {mount}"
+                )
+
+            if len({str(m) for m in mounts}) != len(mounts):
+                raise RuntimeError("I mount cache non sono distinti.")
+            lines.append(f"[PASS] mount cache distinti: {len(mounts)}")
+
+            first = cache[self._disc_cache_key(disc_set.discs[0].image)]
+            bridge = self._make_disc_bridge()
+            bridge.start(Path(first[2]), mounts)
+            status = bridge.status()
+            expected_targets = len(mounts) + 1  # + neutral
+            if status["targets"] != expected_targets:
+                raise RuntimeError(
+                    f"Bridge cache registra {status['targets']} target, attesi {expected_targets}."
+                )
+            lines.append(
+                f"[PASS] bridge registra tutti i mount cache: targets={status['targets']}"
+            )
+        finally:
+            if bridge is not None:
+                bridge.stop()
+            if cache:
+                warnings = self._cleanup_disc_cache(cache, base_count)
+                if warnings:
+                    lines.extend(f"[WARN] cleanup: {warning}" for warning in warnings)
+                else:
+                    lines.append("[PASS] cleanup cache multidisco completo")
+
+        return "\n".join(lines)
+
+    def run_disc_bridge_test(self):
+        self.sandbox.ensure_runtime_args_supported()
+        if self.sandbox.running():
+            raise RuntimeError("Chiudi Bottles/Bubblejail prima del test bridge multidisco.")
+
+        root = self.sandbox.private_home / ".cache" / "bottles-retro-cd" / "bridge-selftest"
+        a = root / "disc-a"
+        b = root / "disc-b"
+        neutral = root / "neutral"
+        shutil.rmtree(root, ignore_errors=True)
+        a.mkdir(parents=True, exist_ok=True)
+        b.mkdir(parents=True, exist_ok=True)
+        neutral.mkdir(parents=True, exist_ok=True)
+        (a / "marker.txt").write_text("A\n", encoding="ascii")
+        (b / "marker.txt").write_text("B\n", encoding="ascii")
+
+        bridge = DiscBridge(
+            INSTANCE,
+            private_home=self.sandbox.private_home,
+            neutral_dir=neutral,
+            media_root=root,
+        )
+        proc = None
+        lines = []
+        try:
+            bridge.start(a, [a, b])
+            status = bridge.status()
+            lines.append(
+                f"[PASS] bridge statico preparato: target={Path(status['target']).name} "
+                f"targets={status['targets']}"
+            )
+            args = ["bubblejail", "run"] + bridge.bubblewrap_args() + ["--debug-shell", INSTANCE]
+            proc = subprocess.Popen(
+                args,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if proc.stdin is None or proc.stdout is None:
+                raise RuntimeError("Pipe del test bridge non disponibili")
+            proc.stdin.write(
+                "printf 'BRIDGE_FIRST='; cat /mnt/cdemu/marker.txt 2>&1\n"
+                "sleep 3\n"
+                "printf 'BRIDGE_SECOND='; cat /mnt/cdemu/marker.txt 2>&1\n"
+                "exit\n"
+            )
+            proc.stdin.flush()
+            time.sleep(1.0)
+            bridge.set_target(b)
+            lines.append("[PASS] selector privato cambiato A → B mentre la jail è attiva")
+            proc.stdin.close()
+            output = proc.stdout.read()
+            rc = proc.wait(timeout=15)
+            if rc != 0:
+                raise RuntimeError(f"Debug shell bridge rc={rc}:\n{output[-3000:]}")
+            if "BRIDGE_FIRST=A" not in output:
+                raise RuntimeError("La jail non ha letto il target iniziale A.\n" + output[-3000:])
+            lines.append("[PASS] /mnt/cdemu iniziale legge A")
+            if "BRIDGE_SECOND=B" not in output:
+                raise RuntimeError("La stessa jail non ha seguito il target B.\n" + output[-3000:])
+            lines.append("[PASS] /mnt/cdemu segue B senza riavviare Bubblejail")
+            return "\n".join(lines)
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            bridge.stop()
+            shutil.rmtree(root, ignore_errors=True)
+
     def run_all_tests(self):
         c = self.run_cdemu_test()
         s = self.run_sandbox_test()
         i = self.run_integration_test()
+        b = self.run_disc_bridge_test()
         sep = "\n\n" + ("=" * 72) + "\n\n"
-        return c + sep + s + sep + i
+        return c + sep + s + sep + i + sep + b
 
 
 class App(Gtk.Application):

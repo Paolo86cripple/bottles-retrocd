@@ -15,7 +15,9 @@ Current version: **0.4.0-rc2**.
 - CDEmu control over D-Bus using the same daemon API model as gCDEmu;
 - UDisks2 mount verification in read-only mode;
 - optional raw optical-device exposure for Wine, accepted only when it matches the CDEmu D-Bus mapping and is validated as a Linux SCSI optical block device;
-- diagnostics before normal use.
+- diagnostics before normal use;
+- explicit Redump/TOSEC-friendly multidisc sets that reference original descriptors without modifying archive files;
+- live multidisc swap with RO cache mounts, stable `/mnt/cdemu` and automatic post-Bottles cleanup.
 
 ## UI
 
@@ -25,7 +27,7 @@ The interface is split into five tabs:
 2. **Sandbox** — per-launch GPU, network and optical-device permissions, GPU Vulkan test, plus Bottles launch.
 3. **Whitelist** — persistent Bubblejail `root_share` RO/RW management.
 4. **Advanced** — DPM, transfer-rate, bad-sector and DVD CSS emulation.
-5. **Test** — CDEmu/UDisks2, Bubblejail and end-to-end CD → Bubblejail tests, with copy-log.
+5. **Test** — cumulative application log plus CDEmu/UDisks2, Bubblejail, bridge/cache and end-to-end CD → Bubblejail tests, with copy-log.
 
 ## Current validation
 
@@ -46,7 +48,9 @@ following have been validated on real hardware:
 - Wayland, XWayland, audio, Vulkan/GPU and dconf;
 - dynamic `/dev/srX` plus `/mnt/cdemu` integration;
 - runner downloaded with temporary network ON persists inside Bubblejail's
-  private HOME and remains available after reopening with network OFF.
+  private HOME and remains available after reopening with network OFF;
+- static bridge A→B follows the selected mount without restarting Bubblejail;
+- Discworld Noir three-disc Redump set caches Disc 1/2/3 on distinct UDisks2 RO mounts and swaps correctly while Bottles remains open.
 
 The rc2 validates raw `/dev/srX` by CDEmu mapping, Linux block-device identity and SCSI optical type 5. The block-layer `ro` bit is diagnostic only; UDisks2 filesystem mounts remain fail-closed read-only. This path has been validated on the target CachyOS system.
 

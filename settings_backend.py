@@ -37,6 +37,7 @@ def load_settings() -> dict:
 def save_settings(settings: dict) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
     gpu_pci = str(settings.get("gpu_pci", ""))
     text = (
         f"schema_version = {SCHEMA_VERSION}\n"

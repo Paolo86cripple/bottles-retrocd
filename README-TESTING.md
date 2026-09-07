@@ -25,7 +25,7 @@ Run the three tests in the **Test** tab with Bottles fully closed:
    jail, raw `/dev/srX` as an explicit compatibility path, while unrelated
    Data paths still hidden.
 
-Use **Copia log** to copy the complete diagnostic output.
+The Test tab is a cumulative application log: it also records normal operations such as load/eject, Bottles launch, disc swaps and cache cleanup. Use **Copia log** to copy the complete session log.
 
 ## Operational Bottles test
 
@@ -59,3 +59,9 @@ for the individual launch/test only.
 The whitelist constrains Bottles/Wine inside Bubblejail. The GTK controller,
 CDEmu daemon and libMirage remain host-side and run with the logged-in user's
 normal permissions.
+
+## Final multidisc validation before merge
+
+A saved explicit set is required for live multidisc. Existing sets are reused unchanged. To create a new set from Disc 1, select its original descriptor and press **Crea set da questo disco**, then add Disc 2/3 with **Aggiungi disco…**. Autodetection is only a hint and is not persisted automatically.
+
+The final end-to-end hardware test is: load Disc 1 on the active CDEmu drive, enable UDisks2 RO + `/mnt/cdemu` + live multidisc, launch Bottles, swap 1→2→3→2 without closing Bottles, then close Bottles and verify the log first reports that cache cleanup is starting and then reports successful cleanup. Cleanup runs on a worker so the GTK UI stays responsive.

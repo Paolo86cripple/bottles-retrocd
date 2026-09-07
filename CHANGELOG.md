@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — multidisc review candidate
+
+- explicit Redump/TOSEC disc sets now start from exactly the selected descriptor (including Disc 1); autodetection remains advisory and is never persisted implicitly;
+- live multidisc now fails closed unless the active disc belongs to an explicit saved multidisc set;
+- added automatic post-Bottles cleanup polling, asynchronous cache cleanup and blocks GUI close while a live multidisc session is active;
+- the Test tab is now a cumulative application log for tests and normal operations; closing Bottles logs cleanup start immediately before the worker removes cache devices;
+- CDEmu cache cleanup revalidates device mappings/count/order before touching or removing appended devices;
+- `/mnt/cdemu` now points to a real empty private directory while media is being changed;
+- app config directory is hardened to mode `0700`; metadata files remain `0600`;
+- saved-set resolution uses exact path membership before naming-based autodetection in GUI, cache tests and live Bottles launch;
+- regression suite: 19 tests, including Disc 1 explicit-set creation, Redump path/mtime immutability, Alt/Rerelease membership and bridge neutral target.
+
 ## Unreleased — GPU selector
 
 - added dynamic GPU detection with stable PCI-address selection instead of `cardX` ordering;
