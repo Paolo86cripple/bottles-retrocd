@@ -12,13 +12,16 @@
 - DAT updates are bounded, staged, parsed and indexed before installation; ZIP traversal/symlinks are rejected and post-swap failures restore the previous generation;
 - local DAT import copies metadata only into the verifier data area and leaves original DAT files untouched;
 - added a read-only protection scanner for ISO9660/Joliet and common raw-sector layouts plus streaming raw-signature detection;
+- protection scanning now also rejects oversized ISO directory extents with a 64 MiB fail-closed limit;
 - added explicit DAT↔scanner comparison while keeping scanner evidence independent from cryptographic DAT matching;
 - added `verifier_cli.py` for stats, verify, verify-set, scan, verify-scan and update/import diagnostics;
 - added a dedicated **Verifica** GTK tab;
 - restored the reviewed **Pulisci log** action using `_clear_log`; it clears the current `Gtk.TextBuffer` only and is disabled while the controller is busy;
-- preserved the already validated rc2/multidisc GUI controller byte-for-byte in `bottles-retro-cd-gui-base.py`, with the verifier entrypoint layered as a subclass to minimise regression risk in CDEmu/Bubblejail/GPU paths;
+- preserved the already validated rc2/multidisc GUI controller in `bottles-retro-cd-gui-base.py`, with verifier and final launch hardening layered through the public entrypoint subclass;
+- incorporated the later GPU/Bubblejail fail-closed review: no implicit `Mesa default`, strict PCI/vendor/device/driver/DRM-node validation, mandatory pre-launch isolation probe, mandatory post-launch probe against the already-running Bubblejail instance, and termination of the exact launch process group if post-launch proof fails;
+- the manual GPU test now uses the same positive-proof isolation validator as normal Bottles launch;
 - hardened CI to compile all Python modules, treat `ResourceWarning` as an error, run the full suite and reject `os.system`, `shell=True`, `eval` and dynamic `exec` patterns;
-- regression suite restored to **65 tests**: 19 existing + 35 verifier/updater + 11 scanner tests.
+- final regression suite: **73 tests PASS** = 19 original sandbox/settings/multidisc/bridge + 8 GPU fail-closed + 35 verifier/updater + 12 scanner tests.
 
 ## Unreleased — multidisc review candidate
 
