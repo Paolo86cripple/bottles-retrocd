@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import tempfile
 import unittest
@@ -78,7 +79,7 @@ class RedumpInfoUpdaterTests(unittest.TestCase):
                 downloader=downloader,
             )
             self.assertEqual(report.url, vu.REDUMP_PC_URL)
-            with catalog._connect() as db:
+            with contextlib.closing(catalog._connect()) as db:
                 row = db.execute("SELECT serial, version FROM games").fetchone()
             self.assertEqual(row, ("SERIAL-123", "v1.0"))
 
