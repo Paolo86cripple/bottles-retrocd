@@ -1,9 +1,9 @@
 # Bottles Retro CD GUI
 
 GTK4 controller for running native Bottles inside a dedicated Bubblejail instance,
-with CDEmu/UDisks2 integration for retro optical media.
+with CDEmu/UDisks2 integration for retro optical media and a read-only Redump/TOSEC verifier.
 
-Current version: **0.4.0-rc2**.
+Current version: **0.4.0-rc2 + unreleased verifier/multidisc work**.
 
 ## Goals
 
@@ -17,22 +17,44 @@ Current version: **0.4.0-rc2**.
 - optional raw optical-device exposure for Wine, accepted only when it matches the CDEmu D-Bus mapping and is validated as a Linux SCSI optical block device;
 - diagnostics before normal use;
 - explicit Redump/TOSEC-friendly multidisc sets that reference original descriptors without modifying archive files;
-- live multidisc swap with RO cache mounts, stable `/mnt/cdemu` and automatic post-Bottles cleanup.
+- live multidisc swap with RO cache mounts, stable `/mnt/cdemu` and automatic post-Bottles cleanup;
+- Redump/TOSEC verification without modifying, mounting or executing archive dumps;
+- official DAT updates with HTTPS host allow-list, bounded ZIP extraction, staged indexing and rollback;
+- optional read-only protection-signature scanning of ISO9660/Joliet and common raw-sector images.
 
 ## UI
 
-The interface is split into five tabs:
+The interface is split into six tabs:
 
 1. **CDEmu** — drive selection, image load/eject and UDisks2 RO status.
 2. **Sandbox** — per-launch GPU, network and optical-device permissions, GPU Vulkan test, plus Bottles launch.
 3. **Whitelist** — persistent Bubblejail `root_share` RO/RW management.
 4. **Advanced** — DPM, transfer-rate, bad-sector and DVD CSS emulation.
-5. **Test** — cumulative application log plus CDEmu/UDisks2, Bubblejail, bridge/cache and end-to-end CD → Bubblejail tests, with copy-log.
+5. **Test** — cumulative application log plus CDEmu/UDisks2, Bubblejail, bridge/cache and end-to-end CD → Bubblejail tests. The log can be copied or explicitly cleared with **Pulisci log**.
+6. **Verifica** — Redump PC/TOSEC DAT update/import, exact 1:1 image/set verification, protection scan and explicit DAT↔scanner comparison.
+
+## Verifier architecture
+
+The verifier is host-side, but deliberately read-only with respect to archive material:
+
+- CUE/TOC descriptors are parsed without rewriting them;
+- descriptor references are canonicalized and rejected if they escape the authorised archive root;
+- CloneCD/MDS companion payloads are resolved without altering names or paths;
+- CRC32, MD5 and SHA-1 are calculated in one streaming pass;
+- the persistent hash cache keys validity on device/inode/size/mtime/ctime and is invalidated when a file changes;
+- Logiqx XML is parsed incrementally into SQLite;
+- a `MATCH 1:1` means every payload belongs to one and only one complete DAT game record;
+- equivalent complete matches in multiple DAT records are reported as `AMBIGUOUS`, never silently chosen;
+- DAT serial/version/protection metadata are retained when present.
+
+Verifier data is stored under the user's XDG data/cache directories, not in the dump tree. The updater downloads only over HTTPS from allow-listed official Redump/TOSEC hosts, validates redirects, bounds compressed/unpacked inputs, rejects ZIP traversal/symlinks, builds a complete staged SQLite index and replaces the live generation only after validation. A failed update restores the previous catalog/DAT generation.
+
+The protection scanner never mounts or executes the image. It reads ISO9660/Joliet structures directly, supports common 2048/2336/2352-sector layouts, performs a bounded file-content scan plus a streaming raw-signature pass, and reports evidence separately from DAT metadata.
 
 ## Current validation
 
 On CachyOS with Bubblejail 0.10.4, CDEmu daemon 3.3.1 and Bottles 67.1 the
-following have been validated on real hardware:
+following have been validated on real hardware in the existing rc2/multidisc work:
 
 - CDEmu temporary-device create/load/unload/remove;
 - CDEmu advanced options through D-Bus;
@@ -47,12 +69,13 @@ following have been validated on real hardware:
 - Vulkan identity test and successful Bottles launches on both available AMD GPUs;
 - Wayland, XWayland, audio, Vulkan/GPU and dconf;
 - dynamic `/dev/srX` plus `/mnt/cdemu` integration;
-- runner downloaded with temporary network ON persists inside Bubblejail's
-  private HOME and remains available after reopening with network OFF;
+- runner downloaded with temporary network ON persists inside Bubblejail's private HOME and remains available after reopening with network OFF;
 - static bridge A→B follows the selected mount without restarting Bubblejail;
 - Discworld Noir three-disc Redump set caches Disc 1/2/3 on distinct UDisks2 RO mounts and swaps correctly while Bottles remains open.
 
-The rc2 validates raw `/dev/srX` by CDEmu mapping, Linux block-device identity and SCSI optical type 5. The block-layer `ro` bit is diagnostic only; UDisks2 filesystem mounts remain fail-closed read-only. This path has been validated on the target CachyOS system.
+The restored regression suite contains **65 unit tests**: the original 19 sandbox/GPU/multidisc tests plus 35 verifier/catalog/update tests and 11 protection-scanner tests. CI also compiles every Python module, treats `ResourceWarning` as an error and scans for unsafe dynamic execution patterns.
+
+The rc2 validates raw `/dev/srX` by CDEmu mapping, Linux block-device identity and SCSI optical type 5. The block-layer `ro` bit is diagnostic only; UDisks2 filesystem mounts remain fail-closed read-only.
 
 ## Run locally
 
@@ -68,14 +91,23 @@ The existing Bubblejail instance is expected at:
 ~/.local/share/bubblejail/instances/Bottles/
 ```
 
+The verifier also has a CLI for diagnostics and scripted checks:
+
+```sh
+python verifier_cli.py stats
+python verifier_cli.py verify /path/to/disc.cue --root /path/to/retropc
+python verifier_cli.py verify-set /path/to/disc1.cue /path/to/disc2.cue --root /path/to/retropc
+python verifier_cli.py scan /path/to/disc.iso --root /path/to/retropc
+python verifier_cli.py verify-scan /path/to/disc.iso --root /path/to/retropc
+python verifier_cli.py update redump
+python verifier_cli.py update tosec
+```
+
 ## Important security boundary
 
-The GTK controller and CDEmu/libMirage run on the host as the logged-in user.
-The whitelist protects **Bottles/Wine inside Bubblejail**; it is not a sandbox
-for the controller itself or for libMirage image parsing.
+The GTK controller, verifier, CDEmu daemon and libMirage run on the host as the logged-in user. Bubblejail protects **Bottles/Wine**, not these host-side components. Consequently all host-side parsing paths are written fail-closed and archive inputs are treated as untrusted data.
 
-Persistent `[network]` in `services.toml` is rejected. The GUI only enables
-network transiently for the selected launch.
+Persistent `[network]` in `services.toml` is rejected. The GUI only enables network transiently for the selected launch. The verifier updater has its own much narrower network policy: HTTPS only to explicit official Redump/TOSEC hosts.
 
 ## License and upstream attribution
 
