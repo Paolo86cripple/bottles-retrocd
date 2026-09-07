@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Bottles Retro CD GUI entrypoint with verifier extension.
 
-The validated rc2/multidisc controller is kept byte-identical in
-``bottles-retro-cd-gui-base.py``.  This entrypoint subclasses it to add the
-Redump/TOSEC verifier and the reviewed log-clear action without rewriting the
-security-sensitive CDEmu/Bubblejail/GPU code.
+The validated rc2/multidisc controller is kept in ``bottles-retro-cd-gui-base.py``.
+This entrypoint subclasses it to add the Redump/TOSEC verifier, the reviewed
+log-clear action and fail-closed GPU/Bubblejail launch validation without
+rewriting the established CDEmu/multidisc controller.
 """
 from __future__ import annotations
 
 import importlib.util
+import signal
 from pathlib import Path
 
 BASE_PATH = Path(__file__).with_name("bottles-retro-cd-gui-base.py")
@@ -23,6 +24,7 @@ GLib = _base.GLib
 Gio = _base.Gio
 RETROPC_ROOT = _base.RETROPC_ROOT
 
+from gpu_backend import validate_gpu_probe_output, validate_gpu_runtime  # noqa: E402
 from protection_scanner import (  # noqa: E402
     compare_catalog_protection,
     format_scan,
@@ -57,8 +59,6 @@ class Window(_base.Window):
         if isinstance(parent, Gtk.Box):
             parent.append(self.clear_log_btn)
         else:
-            # Fail visibly rather than silently losing a reviewed control if the
-            # base layout changes in a future release.
             raise RuntimeError("Layout Test inatteso: impossibile inserire 'Pulisci log'.")
 
     def _clear_log(self, *_):
@@ -69,6 +69,179 @@ class Window(_base.Window):
         # repopulate the buffer that the user explicitly asked to clear.
         self.message.set_text("Log applicazione pulito.")
         self.message.remove_css_class("error")
+
+    # ------------------------------------------------------------------
+    # Fail-closed GPU/Bubblejail path from the final sandbox review.
+    # ------------------------------------------------------------------
+    def selected_gpu(self):
+        gpu = super().selected_gpu()
+        if gpu is None:
+            raise RuntimeError(
+                "Nessuna GPU DRM valida rilevata: avvio Bottles rifiutato invece di usare Mesa default."
+            )
+        validate_gpu_runtime(gpu)
+        return gpu
+
+    def _gpu_hidden_nodes(self, gpu) -> tuple[str, ...]:
+        return tuple(
+            node
+            for other in self.gpus
+            if other.pci_address != gpu.pci_address
+            for node in (other.card_node, other.render_node)
+            if node
+        )
+
+    def _gpu_probe_script(self, gpu) -> tuple[str, tuple[str, ...]]:
+        q = _base.shlex.quote
+        hidden_nodes = self._gpu_hidden_nodes(gpu)
+        checks: list[str] = []
+        for node in (gpu.card_node, gpu.render_node):
+            checks.append(
+                f"if [ -c {q(node)} ]; then "
+                f"printf 'GPU_SELECTED_NODE_OK=%s\\n' {q(node)}; "
+                f"else printf 'GPU_SELECTED_NODE_MISSING=%s\\n' {q(node)}; fi"
+            )
+        for node in hidden_nodes:
+            checks.append(
+                f"if [ -e {q(node)} ]; then "
+                f"printf 'GPU_HIDDEN_NODE_VISIBLE=%s\\n' {q(node)}; "
+                f"else printf 'GPU_HIDDEN_NODE_OK=%s\\n' {q(node)}; fi"
+            )
+        script = """
+set +e
+printf 'GPU_DRI_PRIME=%s\\n' "$DRI_PRIME"
+printf 'GPU_DRI_LIST_BEGIN\\n'
+ls -la /dev/dri 2>&1
+printf 'GPU_DRI_LIST_END\\n'
+""" + "\n".join(checks) + """
+if ! command -v vulkaninfo >/dev/null 2>&1; then
+    printf 'GPU_VULKANINFO_MISSING=1\\n'
+    exit 0
+fi
+vulkaninfo --summary 2>&1
+exit 0
+"""
+        return script, hidden_nodes
+
+    def _probe_gpu_isolation(self, gpu, *, attached: bool) -> str:
+        self.sandbox.ensure_runtime_args_supported()
+        script, hidden_nodes = self._gpu_probe_script(gpu)
+        args = ["bubblejail", "run"]
+        if not attached:
+            args += _base.bubblewrap_gpu_args(gpu)
+        args += ["--debug-shell", _base.INSTANCE]
+        proc = _base.run_cmd(args, input_text=script, timeout=40)
+        if proc.returncode != 0:
+            phase = "post-avvio" if attached else "pre-avvio"
+            raise RuntimeError(
+                f"Probe GPU Bubblejail {phase} fallito con rc={proc.returncode}:\n{proc.stdout[-4000:]}"
+            )
+        actual = validate_gpu_probe_output(gpu, proc.stdout, hidden_nodes=hidden_nodes)
+        phase = "post-avvio" if attached else "pre-avvio"
+        return (
+            f"[PASS] GPU {phase}: {gpu.pci_address} · {gpu.vendor_id}:{gpu.device_id} · "
+            f"{actual.get('deviceName', '—')} · altre GPU nascoste={len(hidden_nodes)}"
+        )
+
+    def _wait_sandbox_state(self, running: bool, timeout: float = 4.0) -> bool:
+        deadline = _base.time.monotonic() + timeout
+        while _base.time.monotonic() < deadline:
+            try:
+                state = self.sandbox.running()
+            except Exception:
+                state = False
+            if state is running:
+                return True
+            _base.time.sleep(0.1)
+        return False
+
+    def _terminate_failed_launch(self, proc) -> None:
+        if proc is not None and proc.poll() is None:
+            try:
+                _base.os.killpg(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=3)
+            except (ProcessLookupError, _base.subprocess.TimeoutExpired):
+                try:
+                    _base.os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    proc.wait(timeout=2)
+                except _base.subprocess.TimeoutExpired:
+                    pass
+        self._wait_sandbox_state(False, timeout=4.0)
+        if self.active_bridge_cache:
+            try:
+                if not self.sandbox.running():
+                    self._cleanup_inactive_live_session()
+            except Exception as exc:
+                self.append_log(f"Cleanup dopo fallimento GPU: {exc}", True)
+
+    def test_selected_gpu(self):
+        if self.sandbox.running():
+            raise RuntimeError("Chiudi Bottles/Bubblejail prima del test GPU.")
+        gpu = self.selected_gpu()
+        result = self._probe_gpu_isolation(gpu, attached=False)
+        if not self._wait_sandbox_state(False, timeout=4.0):
+            raise RuntimeError("Il test GPU ha lasciato un'istanza Bubblejail attiva: avvio rifiutato.")
+        return result
+
+    def launch_bottles(self):
+        # First prove that the exact selected GPU policy can create a clean jail.
+        gpu = self.selected_gpu()
+        preflight = self._probe_gpu_isolation(gpu, attached=False)
+        self.append_log(preflight)
+        if not self._wait_sandbox_state(False, timeout=4.0):
+            raise RuntimeError(
+                "Il probe GPU pre-avvio non ha chiuso completamente Bubblejail; Bottles non viene avviato."
+            )
+
+        # The base launcher owns the complete CD/network/multidisc setup. Capture
+        # only its Bubblejail Popen so a failed post-launch GPU proof can terminate
+        # the exact process group before returning control to the user.
+        captured: list[object] = []
+        real_popen = _base.subprocess.Popen
+
+        def tracked_popen(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            command = args[0] if args else kwargs.get("args")
+            if (
+                isinstance(command, (list, tuple))
+                and command
+                and Path(str(command[0])).name == "bubblejail"
+                and "--" in command
+                and _base.INSTANCE in command
+            ):
+                captured.append(proc)
+            return proc
+
+        _base.subprocess.Popen = tracked_popen
+        try:
+            result = super().launch_bottles()
+        finally:
+            _base.subprocess.Popen = real_popen
+
+        if len(captured) != 1:
+            proc = captured[-1] if captured else None
+            self._terminate_failed_launch(proc)
+            raise RuntimeError(
+                f"Impossibile identificare in modo univoco il processo Bubblejail avviato ({len(captured)} candidati); "
+                "avvio terminato per sicurezza."
+            )
+        launch_proc = captured[0]
+
+        try:
+            if not self._wait_sandbox_state(True, timeout=4.0):
+                raise RuntimeError("L'istanza Bubblejail avviata non risulta attiva.")
+            postflight = self._probe_gpu_isolation(gpu, attached=True)
+        except Exception as exc:
+            self._terminate_failed_launch(launch_proc)
+            raise RuntimeError(
+                f"Verifica GPU/Bubblejail post-avvio fallita; Bottles è stato terminato: {exc}"
+            ) from exc
+
+        self.append_log(postflight)
+        return str(result) + " · isolamento GPU verificato pre/post-avvio"
 
     def build_verifier_tab(self):
         page = self.page_box()
@@ -204,8 +377,6 @@ class Window(_base.Window):
                 path = Path(chosen.get_path()).resolve(strict=True) if chosen and chosen.get_path() else None
                 if path is None:
                     raise RuntimeError("Nessuna directory DAT selezionata.")
-                # Imported material is intentionally kept in a separate source
-                # namespace; official Redump/TOSEC updates cannot overwrite it.
                 self.background(lambda: self._import_dat_path(path), report=True)
             except Exception as exc:
                 self.set_message(str(exc), True)
@@ -281,8 +452,6 @@ class Window(_base.Window):
         return text
 
 
-# App.do_activate performs a global lookup of Window in the base module. Replace
-# that global with the reviewed extension before running the unchanged App class.
 _base.Window = Window
 App = _base.App
 
