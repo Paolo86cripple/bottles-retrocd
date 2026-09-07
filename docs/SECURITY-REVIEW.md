@@ -27,9 +27,9 @@ The recovered verifier/multidisc candidate passes the current static and regress
 - Bubblejail's broad `/dev/dri` exposure is masked; only selected GPU DRM nodes are rebound.
 - A pre-launch probe positively verifies `DRI_PRIME`, selected DRM-node presence, non-selected DRM-node absence, one Vulkan GPU and vendor/device identity.
 - Missing success markers fail closed; lack of proof is not treated as success.
-- A second probe attaches to the already-running Bottles Bubblejail instance and repeats the proof against the effective sandbox.
-- If the running-instance proof fails, the exact captured Bubblejail process group is terminated and the launch is reported as failed.
-- **Test Vulkan** uses the same strict probe validator.
+- A second probe attaches to the already-running Bottles Bubblejail instance and verifies the **effective DRM/Vulkan isolation**: selected nodes present, known non-selected nodes absent, exactly one Vulkan GPU and matching vendor/device identity. It intentionally does not require the attached diagnostic shell to inherit `DRI_PRIME`, because that shell may receive a fresh environment unrelated to the already-running Bottles process.
+- If the running-instance attachment or effective-isolation proof fails, the exact captured Bubblejail process group is terminated and the launch is reported as failed.
+- **Test Vulkan** uses the strict pre-launch validator, including `DRI_PRIME`.
 - GPU sysfs remains visible deliberately for Mesa/udev compatibility; the access-control boundary is `/dev/dri`.
 
 ### Optical / multidisc
@@ -56,7 +56,7 @@ The recovered verifier/multidisc candidate passes the current static and regress
 
 ## Automated evidence
 
-Current branch CI passes:
+Current branch CI must pass:
 
 - Python syntax compilation for all application/verifier/scanner modules;
 - **73/73 unit tests** with `ResourceWarning` promoted to errors;
