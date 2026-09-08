@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import os
 import platform
 import re
 import stat
@@ -107,13 +106,21 @@ def _parse_single_string(text: str) -> str:
 
 
 def _parse_interface_version(text: str) -> str:
-    values = re.findall(r"\b(\d+)\b", text)
-    if len(values) < 2:
-        return ""
-    return f"{int(values[-2])}.{int(values[-1])}"
+    # Current gdbus prints e.g. ``(uint32 7, uint32 0)``. The ``32`` belongs
+    # to the GVariant type and must never be interpreted as a version number.
+    typed = re.findall(r"\buint(?:16|32|64)\s+(\d+)\b", text)
+    if len(typed) >= 2:
+        return f"{int(typed[0])}.{int(typed[1])}"
+    plain = re.findall(r"\b(\d+)\b", text)
+    if len(plain) == 2:
+        return f"{int(plain[0])}.{int(plain[1])}"
+    return ""
 
 
 def _parse_device_count(text: str) -> int | None:
+    typed = re.findall(r"\buint(?:16|32|64)\s+(\d+)\b", text)
+    if typed:
+        return int(typed[-1])
     values = re.findall(r"\b(\d+)\b", text)
     return int(values[-1]) if values else None
 
