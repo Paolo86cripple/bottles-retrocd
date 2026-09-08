@@ -4,9 +4,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from bottles_storage import discover_bottles
 from dgvoodoo_backend import (
     DgVoodooError,
-    discover_bottles,
     fetch_latest_release,
     validate_game_target,
 )
@@ -15,13 +15,17 @@ from sandbox_backend import INSTANCE, SandboxBackend
 
 def _bottles():
     sandbox = SandboxBackend(INSTANCE)
-    return sandbox, discover_bottles(sandbox.private_home)
+    storage, bottles = discover_bottles(sandbox.private_home)
+    return sandbox, storage, bottles
 
 
 def cmd_inventory(_args) -> int:
-    sandbox, bottles = _bottles()
+    sandbox, storage, bottles = _bottles()
     print(f"Bubblejail instance: {INSTANCE}")
     print(f"Private HOME: {sandbox.private_home}")
+    print(f"Bottles storage: {storage.source} · {storage.root}")
+    if storage.configured_custom is not None:
+        print(f"custom_bottles_path: {storage.configured_custom}")
     print(f"Bottles rilevate: {len(bottles)}")
     for bottle in bottles:
         print(f"  - {bottle.name}: {bottle.root}")
@@ -30,20 +34,23 @@ def cmd_inventory(_args) -> int:
     print(f"dgVoodoo2 ufficiale: {release.tag}")
     print(f"Asset: {release.asset_name} · {release.size} byte")
     print(f"SHA-256: {release.sha256}")
-    print(f"Sorgente: dege-diosg/dgVoodoo2")
+    print("Sorgente: dege-diosg/dgVoodoo2")
     print("Nota: metadata soltanto; nessun ZIP è stato scaricato o installato.")
     return 0
 
 
 def cmd_inspect(args) -> int:
-    _sandbox, bottles = _bottles()
+    _sandbox, storage, bottles = _bottles()
     bottle = next((item for item in bottles if item.name == args.bottle), None)
     if bottle is None:
         names = ", ".join(item.name for item in bottles) or "nessuna"
-        raise DgVoodooError(f"Bottle {args.bottle!r} non trovata. Disponibili: {names}")
+        raise DgVoodooError(
+            f"Bottle {args.bottle!r} non trovata in {storage.root}. Disponibili: {names}"
+        )
     raw = Path(args.executable).expanduser()
     executable = raw if raw.is_absolute() else bottle.drive_c / raw
     exe, arch = validate_game_target(executable, bottle)
+    print(f"Bottle storage: {storage.source} · {storage.root}")
     print(f"Bottle: {bottle.name}")
     print(f"drive_c: {bottle.drive_c}")
     print(f"Executable: {exe}")
