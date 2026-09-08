@@ -19,7 +19,7 @@ from dgvoodoo_probe import (
     tamper_refusal_probe,
     uninstall_probe,
 )
-from dgvoodoo_wine import (
+from dgvoodoo_policy import (
     activate_app_overrides,
     activation_status,
     deactivate_app_overrides,
