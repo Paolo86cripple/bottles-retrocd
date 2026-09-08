@@ -104,13 +104,7 @@ def _pending_updates(runner: Runner) -> dict[str, str]:
 
 
 def _package_owner(path: str, runner: Runner) -> str:
-    """Return the pacman package owning *path*, or an empty string.
-
-    DKMS-generated module files are commonly not owned by pacman, while kernels
-    such as linux-cachyos can ship VHBA directly and therefore own the resolved
-    module file.  Ownership is used as evidence for the effective provider,
-    rather than assuming that a standalone vhba package must exist.
-    """
+    """Return the pacman package owning *path*, or an empty string."""
     if not path:
         return ""
     result = runner(("pacman", "-Qo", path), 5.0)
@@ -120,9 +114,30 @@ def _package_owner(path: str, runner: Runner) -> str:
     return match.group(1) if match else ""
 
 
+def _normalized_module_path(path: str) -> str:
+    return path.replace("\\", "/")
+
+
+def _module_for_kernel(path: str, kernel: str) -> bool:
+    return f"/modules/{kernel}/" in _normalized_module_path(path)
+
+
 def _kernel_tree_module(path: str, kernel: str) -> bool:
-    normalized = path.replace("\\", "/")
-    return f"/modules/{kernel}/kernel/" in normalized
+    return f"/modules/{kernel}/kernel/" in _normalized_module_path(path)
+
+
+def _package_upstream_version(version: str) -> str:
+    """Strip Arch epoch/pkgrel while preserving the upstream pkgver exactly."""
+    value = version.strip()
+    if ":" in value:
+        value = value.split(":", 1)[1]
+    if "-" in value:
+        value = value.rsplit("-", 1)[0]
+    return value
+
+
+def _runtime_matches_package(runtime: str, package_version: str) -> bool:
+    return bool(runtime and package_version and runtime == _package_upstream_version(package_version))
 
 
 def _parse_single_string(text: str) -> str:
@@ -206,8 +221,8 @@ def inspect_lifecycle(
     module_owner = _package_owner(vhba_module_path, runner)
 
     # Determine the provider from the module that the running kernel actually
-    # resolves.  CachyOS currently ships VHBA inside linux-cachyos itself, while
-    # DKMS output is normally unowned by pacman and falls back to package state.
+    # resolves. CachyOS can ship VHBA inside linux-cachyos itself, while DKMS
+    # output is normally unowned by pacman and falls back to package state.
     if module_owner in VHBA_PROVIDERS:
         provider = module_owner
     elif module_owner and _kernel_tree_module(vhba_module_path, kernel):
@@ -255,7 +270,7 @@ def inspect_lifecycle(
 
     if not vhba_module_path:
         failures.append("modinfo non trova il modulo vhba per il kernel corrente")
-    elif kernel not in vhba_module_path:
+    elif not _module_for_kernel(vhba_module_path, kernel):
         failures.append(
             f"modulo vhba risolto fuori dalla directory del kernel corrente: {vhba_module_path}"
         )
@@ -286,11 +301,11 @@ def inspect_lifecycle(
 
     daemon_pkg = by_name["cdemu-daemon"]
     lib_pkg = by_name["libmirage"]
-    if daemon_pkg.installed and daemon_version and not daemon_pkg.version.startswith(daemon_version):
+    if daemon_pkg.installed and daemon_version and not _runtime_matches_package(daemon_version, daemon_pkg.version):
         warnings.append(
             f"versione daemon runtime {daemon_version} diversa dal pacchetto {daemon_pkg.version}"
         )
-    if lib_pkg.installed and library_version and not lib_pkg.version.startswith(library_version):
+    if lib_pkg.installed and library_version and not _runtime_matches_package(library_version, lib_pkg.version):
         warnings.append(
             f"versione libMirage runtime {library_version} diversa dal pacchetto {lib_pkg.version}"
         )
@@ -324,7 +339,7 @@ def inspect_lifecycle(
 def update_command(report: LifecycleReport) -> tuple[str, ...]:
     """Return an explicit full-system Arch update command; never execute it.
 
-    Only already-present optional components are included.  A kernel-bundled
+    Only already-present optional components are included. A kernel-bundled
     VHBA provider is updated by the normal full-system ``-Syu`` transaction and
     must not cause installation of a second DKMS/standalone VHBA stack.
     """
