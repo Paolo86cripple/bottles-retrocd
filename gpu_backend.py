@@ -264,6 +264,15 @@ def parse_vulkan_summary(text: str) -> list[dict[str, str]]:
     return devices
 
 
+def _probe_lines(text: str) -> tuple[str, ...]:
+    """Normalize probe output for exact marker matching.
+
+    Bubblejail may echo the shell source when attaching to a running instance.
+    Literal GPU_* strings inside that diagnostic must not count as evidence.
+    """
+    return tuple(line.strip() for line in text.splitlines())
+
+
 def validate_gpu_probe_output(
     gpu: GPUInfo,
     text: str,
@@ -287,10 +296,11 @@ def validate_gpu_probe_output(
     preflight and hardware access in the running jail is enforced by /dev/dri.
     """
     validate_gpu_info(gpu)
+    lines = _probe_lines(text)
 
     if require_dri_prime:
         dri_prime = ""
-        for line in text.splitlines():
+        for line in lines:
             if line.startswith("GPU_DRI_PRIME="):
                 dri_prime = line.split("=", 1)[1].strip()
                 break
@@ -300,18 +310,18 @@ def validate_gpu_probe_output(
             )
 
     for node in (gpu.card_node, gpu.render_node):
-        if f"GPU_SELECTED_NODE_OK={node}" not in text:
+        if f"GPU_SELECTED_NODE_OK={node}" not in lines:
             raise RuntimeError(f"Nodo DRM selezionato non confermato nella jail: {node}")
-        if f"GPU_SELECTED_NODE_MISSING={node}" in text:
+        if f"GPU_SELECTED_NODE_MISSING={node}" in lines:
             raise RuntimeError(f"Nodo DRM selezionato mancante nella jail: {node}")
 
     for node in hidden_nodes:
-        if f"GPU_HIDDEN_NODE_VISIBLE={node}" in text:
+        if f"GPU_HIDDEN_NODE_VISIBLE={node}" in lines:
             raise RuntimeError(f"Isolamento GPU fallito; nodo non selezionato visibile: {node}")
-        if f"GPU_HIDDEN_NODE_OK={node}" not in text:
+        if f"GPU_HIDDEN_NODE_OK={node}" not in lines:
             raise RuntimeError(f"Assenza del nodo non selezionato non confermata: {node}")
 
-    vulkan_missing = "GPU_VULKANINFO_MISSING=1" in text
+    vulkan_missing = "GPU_VULKANINFO_MISSING=1" in lines
     if vulkan_missing:
         if require_dri_prime:
             raise RuntimeError("vulkaninfo non è disponibile nel probe GPU pre-avvio.")
