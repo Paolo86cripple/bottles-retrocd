@@ -20,12 +20,15 @@ This roadmap records the current agreed order of work. Security-sensitive steps 
    - explicit `/dev/sgX` advanced path target-tested successfully;
    - lifecycle manager, updater negative paths and `Espelli tutto` target-tested successfully;
    - GTK/main-thread safety, GPU isolation, network-OFF, whitelist, persistent settings and verifier/source-immutability invariants regression-reviewed.
-7. **dgVoodoo2 manager** — next active point, before packaging.
+7. **dgVoodoo2 manager** — **ACTIVE**, before packaging.
+   - **7A payload/transaction backend:** official `dege-diosg/dgVoodoo2` stable runtime release only; GitHub-published SHA-256 verification; PE x86/x64 detection; strict ZIP validation; explicit DirectX/Glide DLL selection; private manifest/backup; reversible uninstall; no binaries vendored in RetroCD;
+   - **7B Bottles/Wine integration:** validate per-application Wine DLL overrides first; snapshot/restore previous override values; never silently broaden to bottle-global overrides; prove effective wrapper loading on the target runner;
+   - **7C GUI/configuration:** bottle + executable selector, detected architecture, individual wrapper switches, version/cache/status, install/update/uninstall, override preview and per-game control-panel launch;
    - per-game/bottle installation rather than global DLL replacement;
-   - controlled DirectX/Glide wrapper selection;
-   - backup/restore of replaced files;
-   - version/configuration visibility;
-   - no weakening of the Bubblejail boundary.
+   - preserve an existing per-game `dgVoodoo.conf` by default;
+   - reject automatic restore if a managed file changed after installation;
+   - upstream Wine/Proton support is explicitly unsupported, so integration remains optional and title-specific;
+   - no weakening of the Bubblejail boundary, GPU isolation or network-OFF default.
 8. **Arch/CachyOS packaging** — install/remove RetroCD cleanly and integrate required host components without duplicating privileged infrastructure.
 9. **Release hardening and polish** — final regression review, documentation, packaging/release artifacts and target-machine acceptance pass.
 10. **Optional libRashader + Slang shader integration for Windows games through Bottles** — future post-release point, to begin only after the libRashader integration in the AGS launcher is complete, stable and well understood.
