@@ -8,6 +8,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from retro_optical import bubblewrap_optical_control_mask_args
+
 PCI_RE = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$")
 HEX4_RE = re.compile(r"^[0-9a-fA-F]{4}$")
 CARD_NODE_RE = re.compile(r"^card[0-9]+$")
@@ -218,6 +220,11 @@ def bubblewrap_gpu_args(gpu: GPUInfo | None) -> list[str]:
     args += ["--debug-bwrap-args", "tmpfs", "/dev/dri"]
     args += ["--debug-bwrap-args", "dev-bind", gpu.card_node, gpu.card_node]
     args += ["--debug-bwrap-args", "dev-bind", gpu.render_node, gpu.render_node]
+    # Every normal launch already passes through this mandatory GPU policy.
+    # Apply the equally mandatory host-only VHBA mask at the same final bwrap
+    # layer so a broader persistent Bubblejail device policy cannot leak the
+    # real CDEmu control interface into Wine.
+    args += bubblewrap_optical_control_mask_args()
     return args
 
 
