@@ -30,4 +30,4 @@ if ! command -v udisksctl >/dev/null 2>&1; then
     printf 'Nota: udisksctl non trovato; i test UDisks2 dovranno essere disattivati.\n' >&2
 fi
 
-exec python3 "$HERE/bottles-retro-cd-gui.py" "$@"
+exec python3 "$HERE/bottles-retro-cd-gui-lifecycle.py" "$@"
