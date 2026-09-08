@@ -18,6 +18,7 @@ jobs:
           bottles-retro-cd-gui.py
           bottles-retro-cd-gui-base.py
           bottles-retro-cd-gui-lifecycle.py
+          bottles_storage.py
           cdemu_backend.py
           cdemu_lifecycle.py
           cdemu_lifecycle_cli.py
