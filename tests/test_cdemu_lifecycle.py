@@ -147,6 +147,13 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(report.ok)
         self.assertTrue(any("fuori dalla directory del kernel corrente" in item for item in report.failures))
 
+    def test_similar_kernel_name_does_not_pass_by_substring(self):
+        runner = FakeRunner()
+        runner.module_path = f"/usr/lib/modules/x{KERNEL}/updates/dkms/vhba.ko.zst"
+        report = self.inspect(runner)
+        self.assertFalse(report.ok)
+        self.assertTrue(any("fuori dalla directory del kernel corrente" in item for item in report.failures))
+
     def test_missing_headers_fail_for_dkms(self):
         runner = FakeRunner()
         tmp, sys_root, dev_root, modules_root = self.make_roots()
@@ -175,6 +182,20 @@ class LifecycleTests(unittest.TestCase):
         report = self.inspect(runner)
         self.assertFalse(report.ok)
         self.assertTrue(any("interfaccia CDEmu incompatibile" in item for item in report.failures))
+
+    def test_package_version_prefix_does_not_fake_runtime_match(self):
+        runner = FakeRunner()
+        runner.packages["cdemu-daemon"] = "3.3.10-1"
+        report = self.inspect(runner)
+        self.assertTrue(report.ok, report.failures)
+        self.assertTrue(any("versione daemon runtime 3.3.1 diversa" in item for item in report.warnings))
+
+    def test_arch_epoch_and_pkgrel_are_ignored_for_runtime_match(self):
+        runner = FakeRunner()
+        runner.packages["cdemu-daemon"] = "1:3.3.1-4"
+        report = self.inspect(runner)
+        self.assertTrue(report.ok, report.failures)
+        self.assertFalse(any("versione daemon runtime" in item for item in report.warnings))
 
     def test_pending_component_update_is_reported_without_execution(self):
         runner = FakeRunner()
