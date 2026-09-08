@@ -20,7 +20,7 @@ class OpticalExposure:
     """Exact optical surface intentionally exposed to one Bottles launch.
 
     CDEmu itself, libMirage and the VHBA control device are never part of this
-    surface: they remain trusted host-side components.  Only a verified RO
+    surface: they remain trusted host-side components. Only a verified RO
     filesystem view and, when compatibility requires it, the exact CDEmu
     sr/sg mapping may cross the Bubblejail boundary.
     """
@@ -47,6 +47,18 @@ class OpticalExposure:
             raise RuntimeError("Retro Optical: sg_path presente senza esposizione sg autorizzata.")
 
 
+def bubblewrap_optical_control_mask_args() -> list[str]:
+    """Mask the host VHBA control node at the final bwrap layer.
+
+    Some Bubblejail profiles can make additional host device nodes visible in
+    the jail. RetroCD must never give Wine the real VHBA control interface, so
+    the pathname is over-mounted with /dev/null. The post-launch probe verifies
+    the resulting device identity by major/minor; merely having the same path is
+    not considered proof.
+    """
+    return ["--debug-bwrap-args", "dev-bind", "/dev/null", VHBA_CONTROL_PATH]
+
+
 def bubblejail_optical_probe_invocation(instance: str, script: str) -> list[str]:
     """Build the post-launch probe invocation for an already-running jail."""
     if not instance or instance.startswith("-"):
@@ -64,17 +76,30 @@ def bubblejail_optical_probe_invocation(instance: str, script: str) -> list[str]
 def optical_probe_script() -> str:
     """Return a read-only shell probe for the effective optical boundary.
 
-    The probe never writes to the mounted disc.  Read-only status is proven
-    from the mount namespace with findmnt, while device and D-Bus visibility
-    are enumerated explicitly.
+    The probe never writes to the mounted disc. Read-only status is proven from
+    the mount namespace with findmnt, while device and D-Bus visibility are
+    enumerated explicitly. VHBA is accepted only when absent or when the path is
+    positively proven to resolve to the same character device as /dev/null.
     """
     return f"""\
 set +e
 
-if [ -e {VHBA_CONTROL_PATH} ]; then
-    printf 'OPT_VHBA_VISIBLE=1\\n'
-else
+if [ ! -e {VHBA_CONTROL_PATH} ]; then
     printf 'OPT_VHBA_HIDDEN=1\\n'
+elif command -v stat >/dev/null 2>&1 && [ -c {VHBA_CONTROL_PATH} ] && [ -c /dev/null ]; then
+    vhba_dev="$(stat -Lc '%t:%T' {VHBA_CONTROL_PATH} 2>/dev/null)"
+    null_dev="$(stat -Lc '%t:%T' /dev/null 2>/dev/null)"
+    if [ -n "$vhba_dev" ] && [ "$vhba_dev" = "$null_dev" ]; then
+        printf 'OPT_VHBA_MASKED_NULL=1\\n'
+        printf 'OPT_VHBA_DEVICE=%s\\n' "$vhba_dev"
+    else
+        printf 'OPT_VHBA_VISIBLE=1\\n'
+        printf 'OPT_VHBA_DEVICE=%s\\n' "$vhba_dev"
+        printf 'OPT_NULL_DEVICE=%s\\n' "$null_dev"
+    fi
+else
+    command -v stat >/dev/null 2>&1 || printf 'OPT_STAT_MISSING=1\\n'
+    printf 'OPT_VHBA_VISIBLE=1\\n'
 fi
 
 for node in /dev/sr[0-9]*; do
@@ -136,8 +161,15 @@ def validate_optical_probe_output(exposure: OpticalExposure, text: str) -> dict[
     """Fail closed unless the running jail exposes exactly the authorised surface."""
     exposure.validate()
 
-    if "OPT_VHBA_VISIBLE=1" in text or "OPT_VHBA_HIDDEN=1" not in text:
-        raise RuntimeError("Retro Optical: /dev/vhba_ctl non risulta nascosto nella jail.")
+    vhba_hidden = "OPT_VHBA_HIDDEN=1" in text
+    vhba_masked = "OPT_VHBA_MASKED_NULL=1" in text
+    if "OPT_STAT_MISSING=1" in text:
+        raise RuntimeError("Retro Optical: stat assente; impossibile provare la maschera /dev/vhba_ctl.")
+    if "OPT_VHBA_VISIBLE=1" in text or vhba_hidden == vhba_masked:
+        raise RuntimeError(
+            "Retro Optical: /dev/vhba_ctl non è né nascosto né provato come mascherato su /dev/null."
+        )
+    vhba_state = "hidden" if vhba_hidden else "masked-null"
 
     if "OPT_GDBUS_MISSING=1" in text:
         raise RuntimeError("Retro Optical: gdbus assente; impossibile provare il blocco D-Bus CDEmu.")
@@ -184,7 +216,9 @@ def validate_optical_probe_output(exposure: OpticalExposure, text: str) -> dict[
         "mount_options": mount_options,
         "sr": exposure.sr_path if exposure.raw_expected else "",
         "sg": exposure.sg_path if exposure.sg_expected else "",
-        "vhba_hidden": True,
+        "vhba_state": vhba_state,
+        "vhba_hidden": vhba_hidden,
+        "vhba_masked": vhba_masked,
         "cdemu_dbus_blocked": True,
     }
 
@@ -194,7 +228,8 @@ def format_optical_probe_success(exposure: OpticalExposure, result: dict[str, ob
     mount = f"{JAIL_CD_TARGET}=RO" if exposure.mount_expected else f"{JAIL_CD_TARGET}=hidden"
     sr = exposure.sr_path if exposure.raw_expected else "hidden"
     sg = exposure.sg_path if exposure.sg_expected else "hidden"
+    vhba = str(result.get("vhba_state", "unproven"))
     return (
         "[PASS] Retro Optical post-avvio: "
-        f"vhba=hidden · CDEmu D-Bus=blocked · sr={sr} · sg={sg} · {mount}"
+        f"vhba={vhba} · CDEmu D-Bus=blocked · sr={sr} · sg={sg} · {mount}"
     )
