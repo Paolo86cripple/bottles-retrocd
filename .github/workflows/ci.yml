@@ -23,6 +23,7 @@ jobs:
           gpu_backend.py
           multidisc_backend.py
           protection_scanner.py
+          retro_optical.py
           sandbox_backend.py
           settings_backend.py
           verifier_backend.py
