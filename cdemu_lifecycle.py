@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import platform
 import re
 import stat
@@ -61,6 +62,8 @@ Runner = Callable[[Sequence[str], float], CommandResult]
 
 
 def run_command(args: Sequence[str], timeout: float = 8.0) -> CommandResult:
+    env = dict(os.environ)
+    env["LC_ALL"] = "C"
     try:
         proc = subprocess.run(
             list(args),
@@ -69,6 +72,7 @@ def run_command(args: Sequence[str], timeout: float = 8.0) -> CommandResult:
             text=True,
             timeout=timeout,
             check=False,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CommandResult(127, str(exc))
@@ -97,6 +101,28 @@ def _pending_updates(runner: Runner) -> dict[str, str]:
         if match:
             updates[match.group(1)] = match.group(2)
     return updates
+
+
+def _package_owner(path: str, runner: Runner) -> str:
+    """Return the pacman package owning *path*, or an empty string.
+
+    DKMS-generated module files are commonly not owned by pacman, while kernels
+    such as linux-cachyos can ship VHBA directly and therefore own the resolved
+    module file.  Ownership is used as evidence for the effective provider,
+    rather than assuming that a standalone vhba package must exist.
+    """
+    if not path:
+        return ""
+    result = runner(("pacman", "-Qo", path), 5.0)
+    if result.returncode != 0:
+        return ""
+    match = re.search(r"\bis owned by\s+(\S+)\s+\S+\s*$", result.stdout, re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def _kernel_tree_module(path: str, kernel: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return f"/modules/{kernel}/kernel/" in normalized
 
 
 def _parse_single_string(text: str) -> str:
@@ -152,7 +178,7 @@ def inspect_lifecycle(
 ) -> LifecycleReport:
     kernel = kernel or platform.release()
     updates = _pending_updates(runner)
-    packages = []
+    packages: list[PackageState] = []
     by_name: dict[str, PackageState] = {}
     for name in TRACKED_PACKAGES:
         state = _package_state(name, runner)
@@ -160,13 +186,6 @@ def inspect_lifecycle(
             state = PackageState(name, True, state.version, updates[name])
         packages.append(state)
         by_name[name] = state
-
-    if by_name["vhba-module-dkms"].installed:
-        provider = "vhba-module-dkms"
-    elif by_name["vhba-module"].installed:
-        provider = "vhba-module"
-    else:
-        provider = ""
 
     vhba_loaded = (sys_root / "module" / "vhba").exists()
     vhba_ctl = dev_root / "vhba_ctl"
@@ -179,7 +198,29 @@ def inspect_lifecycle(
             vhba_control_char = False
 
     modinfo = runner(("modinfo", "-n", "vhba"), 5.0)
-    vhba_module_path = modinfo.stdout.strip().splitlines()[0] if modinfo.returncode == 0 and modinfo.stdout.strip() else ""
+    vhba_module_path = (
+        modinfo.stdout.strip().splitlines()[0]
+        if modinfo.returncode == 0 and modinfo.stdout.strip()
+        else ""
+    )
+    module_owner = _package_owner(vhba_module_path, runner)
+
+    # Determine the provider from the module that the running kernel actually
+    # resolves.  CachyOS currently ships VHBA inside linux-cachyos itself, while
+    # DKMS output is normally unowned by pacman and falls back to package state.
+    if module_owner in VHBA_PROVIDERS:
+        provider = module_owner
+    elif module_owner and _kernel_tree_module(vhba_module_path, kernel):
+        provider = f"kernel:{module_owner}"
+    elif module_owner:
+        provider = f"package:{module_owner}"
+    elif by_name["vhba-module-dkms"].installed:
+        provider = "vhba-module-dkms"
+    elif by_name["vhba-module"].installed:
+        provider = "vhba-module"
+    else:
+        provider = ""
+
     kernel_headers_present = (modules_root / kernel / "build").exists()
 
     service = runner(("systemctl", "--user", "is-active", "cdemu-daemon.service"), 5.0)
@@ -212,21 +253,20 @@ def inspect_lifecycle(
         if not by_name[name].installed:
             failures.append(f"pacchetto richiesto non installato: {name}")
 
-    if not provider:
-        failures.append("nessun provider VHBA installato")
-    elif "cachyos" in kernel.lower() and provider != "vhba-module-dkms":
-        failures.append(
-            f"kernel CachyOS {kernel} con provider {provider}: usare vhba-module-dkms"
-        )
-
-    if provider == "vhba-module-dkms" and not kernel_headers_present:
-        failures.append(f"headers del kernel corrente assenti: {modules_root / kernel / 'build'}")
     if not vhba_module_path:
         failures.append("modinfo non trova il modulo vhba per il kernel corrente")
     elif kernel not in vhba_module_path:
-        warnings.append(
+        failures.append(
             f"modulo vhba risolto fuori dalla directory del kernel corrente: {vhba_module_path}"
         )
+
+    if not provider:
+        failures.append("provider VHBA effettivo non determinabile")
+    elif provider == "vhba-module-dkms" and not kernel_headers_present:
+        failures.append(f"headers del kernel corrente assenti per DKMS: {modules_root / kernel / 'build'}")
+    elif provider.startswith("package:"):
+        warnings.append(f"provider VHBA non standard rilevato dal file modulo: {provider.removeprefix('package:')}")
+
     if not vhba_loaded:
         failures.append("modulo kernel vhba non caricato")
     if not vhba_control_present:
@@ -282,13 +322,17 @@ def inspect_lifecycle(
 
 
 def update_command(report: LifecycleReport) -> tuple[str, ...]:
-    """Return the explicit full-system Arch update command; never execute it."""
+    """Return an explicit full-system Arch update command; never execute it.
+
+    Only already-present optional components are included.  A kernel-bundled
+    VHBA provider is updated by the normal full-system ``-Syu`` transaction and
+    must not cause installation of a second DKMS/standalone VHBA stack.
+    """
     packages = ["cdemu-daemon", "libmirage"]
-    if report.vhba_provider == "vhba-module-dkms" or "cachyos" in report.kernel.lower():
-        packages.append("vhba-module-dkms")
-    elif report.vhba_provider:
+    if report.vhba_provider in VHBA_PROVIDERS:
         packages.append(report.vhba_provider)
-    packages.append("cdemu-client")
+    if any(state.name == "cdemu-client" and state.installed for state in report.packages):
+        packages.append("cdemu-client")
     return ("sudo", "pacman", "-Syu", "--needed", *packages)
 
 
@@ -310,7 +354,8 @@ def format_report(report: LifecycleReport) -> str:
             lines.append(f"  {'[UPD]' if pending else '[OK] '} {state.name} {state.version}{pending}")
         else:
             optional = " (opzionale)" if state.name in OPTIONAL_PACKAGES else ""
-            lines.append(f"  [--]  {state.name}: non installato{optional}")
+            standalone = " (non necessario se il kernel fornisce VHBA)" if state.name in VHBA_PROVIDERS else ""
+            lines.append(f"  [--]  {state.name}: non installato{optional}{standalone}")
     lines.extend(f"[FAIL] {item}" for item in report.failures)
     lines.extend(f"[WARN] {item}" for item in report.warnings)
     lines.append("Aggiornamento consigliato (non eseguito): " + " ".join(update_command(report)))
