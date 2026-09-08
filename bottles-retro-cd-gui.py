@@ -57,6 +57,7 @@ class Window(_base.Window):
         self.verifier = CatalogIndex()
         self._last_optical_exposure: OpticalExposure | None = None
         self._install_clear_log_button()
+        self._install_eject_all_button()
         self.build_verifier_tab()
         self.refresh_verifier_status()
 
@@ -73,6 +74,23 @@ class Window(_base.Window):
         else:
             raise RuntimeError("Layout Test inatteso: impossibile inserire 'Pulisci log'.")
 
+    def _install_eject_all_button(self):
+        """Add a conservative global eject action next to the single-device eject."""
+        self.eject_all_btn = Gtk.Button(label="Espelli tutto")
+        self.eject_all_btn.set_tooltip_text(
+            "Smonta ed espelle tutti i media CDEmu caricati da percorsi sotto retropc. "
+            "Non rimuove i device CDEmu e non tocca media esterni caricati da altri client. "
+            "Per sicurezza richiede Bottles/Bubblejail chiuso."
+        )
+        self.eject_all_btn.connect(
+            "clicked", lambda *_: self.background(self.eject_all_retrocd_media)
+        )
+        parent = self.eject_btn.get_parent()
+        if isinstance(parent, Gtk.Box):
+            parent.append(self.eject_all_btn)
+        else:
+            raise RuntimeError("Layout CDEmu inatteso: impossibile inserire 'Espelli tutto'.")
+
     def _clear_log(self, *_):
         if self.busy:
             return
@@ -81,6 +99,80 @@ class Window(_base.Window):
         # repopulate the buffer that the user explicitly asked to clear.
         self.message.set_text("Log applicazione pulito.")
         self.message.remove_css_class("error")
+
+    @staticmethod
+    def _retrocd_media_filenames(filenames) -> bool:
+        """Return True only when every reported image path belongs to RETROPC_ROOT."""
+        values = tuple(str(item) for item in filenames if str(item))
+        if not values:
+            return False
+        root = RETROPC_ROOT.resolve(strict=False)
+        for raw in values:
+            try:
+                resolved = Path(raw).resolve(strict=False)
+            except OSError:
+                return False
+            if not resolved.is_relative_to(root):
+                return False
+        return True
+
+    def eject_all_retrocd_media(self):
+        """Unmount/unload all RetroCD media without disturbing foreign CDEmu media."""
+        if not self.cdemu:
+            raise RuntimeError("CDEmu non connesso.")
+        if self.sandbox.running():
+            raise RuntimeError(
+                "Chiudi Bottles/Bubblejail prima di usare 'Espelli tutto'. "
+                "Durante una sessione live usa l'espulsione singola del device attivo."
+            )
+
+        cleanup_notes: list[str] = []
+        cache_was_present = bool(self.active_bridge_cache)
+        if cache_was_present:
+            cleanup_notes.extend(self._cleanup_inactive_live_session())
+
+        ejected: list[int] = []
+        skipped_external: list[int] = []
+        failures: list[str] = []
+
+        # Re-read daemon state after any owned multidisc cache has been cleaned.
+        for device in self.cdemu.devices():
+            if not device.loaded:
+                continue
+            if not self._retrocd_media_filenames(device.filenames):
+                skipped_external.append(device.index)
+                continue
+            try:
+                if device.sr_path:
+                    self.unmount(device.sr_path)
+                self.cdemu.unload(device.index)
+                self.cdemu.wait_loaded(device.index, False)
+                ejected.append(device.index)
+            except Exception as exc:
+                failures.append(f"device #{device.index}: {exc}")
+
+        if cleanup_notes or failures:
+            details: list[str] = []
+            if cleanup_notes:
+                details.append("cleanup cache: " + "; ".join(cleanup_notes))
+            if failures:
+                details.append("espulsione: " + "; ".join(failures))
+            if ejected:
+                details.append("già espulsi=" + ",".join(f"#{idx}" for idx in ejected))
+            if skipped_external:
+                details.append(
+                    "media esterni lasciati intatti=" + ",".join(f"#{idx}" for idx in skipped_external)
+                )
+            raise RuntimeError("Espelli tutto non completato in modo verificabile: " + " · ".join(details))
+
+        parts = [f"Espelli tutto: {len(ejected)} media RetroCD espulsi"]
+        if cache_was_present:
+            parts.append("cache multidisco ripulita")
+        if skipped_external:
+            parts.append(f"{len(skipped_external)} media esterni lasciati intatti")
+        if not ejected and not cache_was_present:
+            parts[0] = "Espelli tutto: nessun media RetroCD caricato"
+        return " · ".join(parts) + "."
 
     # ------------------------------------------------------------------
     # Fail-closed GPU/Bubblejail path from the final sandbox review.
@@ -422,7 +514,7 @@ exit 0
     def set_busy(self, busy: bool):
         super().set_busy(busy)
         for name in (
-            "clear_log_btn", "copy_log_btn", "update_redump_btn", "update_tosec_btn",
+            "clear_log_btn", "copy_log_btn", "eject_all_btn", "update_redump_btn", "update_tosec_btn",
             "import_dat_btn", "verify_image_btn", "verify_set_btn", "scan_image_btn", "verify_scan_btn",
         ):
             widget = getattr(self, name, None)
