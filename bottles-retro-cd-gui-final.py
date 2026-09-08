@@ -22,6 +22,11 @@ from dgvoodoo_probe import (  # noqa: E402
     probe_executable,
     probe_status,
 )
+from display_backend import (  # noqa: E402
+    DisplayBackend,
+    bottles_executable_command,
+    diagnose_output,
+)
 
 
 class Window(_dg.Window):
@@ -209,13 +214,12 @@ class Window(_dg.Window):
         return False
 
     def launch_dgvoodoo_control_panel(self):
-        """Launch the graphical CPL without blocking the RetroCD GUI.
+        """Launch dgVoodooCpl using Wine's native Wayland path.
 
-        The previous implementation waited synchronously for bottles-cli/bubblejail
-        to terminate and therefore reported only that the process had closed. A
-        graphical control panel must instead remain alive independently while the
-        RetroCD window stays responsive. We retain a small diagnostic log so an
-        immediate Wine/Bottles exit is visible rather than silently accepted.
+        XWayland is intentionally avoided here because the target system proved
+        that Wine's MIT-SHM path fails inside Bubblejail's isolated IPC namespace.
+        Removing DISPLAY from this child selects winewayland.drv without sharing
+        host IPC or weakening any Bubblejail service.
         """
         self._dg_mutation_preflight()
         if self._dg_cpl_process is not None and self._dg_cpl_process.poll() is None:
@@ -236,10 +240,12 @@ class Window(_dg.Window):
         log_dir = manager_data_dir() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "dgvoodoo-cpl.log"
-        command = [
-            "bubblejail", "run", "--wait", _dg.INSTANCE,
-            "bottles-cli", "run", "-b", bottle.name, "-e", str(cpl),
-        ]
+        command = bottles_executable_command(
+            _dg.INSTANCE,
+            bottle.name,
+            str(cpl),
+            backend=DisplayBackend.WAYLAND,
+        )
         try:
             log_handle = log_path.open("w", encoding="utf-8")
             process = subprocess.Popen(
@@ -257,7 +263,7 @@ class Window(_dg.Window):
         self._dg_cpl_log = log_path
         GLib.idle_add(self._start_cpl_watch, process, log_path)
         return (
-            f"dgVoodooCpl avviato per {exe.name} · PID {process.pid}. "
+            f"dgVoodooCpl avviato via Wine Wayland nativo per {exe.name} · PID {process.pid}. "
             f"RetroCD resta utilizzabile; log diagnostico: {log_path}"
         )
 
@@ -272,13 +278,19 @@ class Window(_dg.Window):
                 text = ""
             tail = "\n".join(text.splitlines()[-12:]).strip()
             self._dg_cpl_process = None
-            if code == 0:
-                message = "dgVoodooCpl terminato normalmente."
+            diag = diagnose_output(text, backend=DisplayBackend.WAYLAND)
+            if diag.mit_shm_error:
+                message = "dgVoodooCpl: errore MIT-SHM inatteso anche nel percorso Wayland nativo."
+                if tail:
+                    message += " Log finale:\n" + tail
+                self.set_message(message, True)
+            elif code == 0:
+                message = "dgVoodooCpl terminato normalmente via Wine Wayland nativo."
                 if tail:
                     message += " Log finale:\n" + tail
                 self.set_message(message)
             else:
-                message = f"dgVoodooCpl terminato con rc={code}."
+                message = f"dgVoodooCpl terminato con rc={code} via Wine Wayland nativo."
                 if tail:
                     message += " Log finale:\n" + tail
                 self.set_message(message, True)
