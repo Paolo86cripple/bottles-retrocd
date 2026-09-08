@@ -25,6 +25,7 @@ jobs:
           cdemu_update_cli.py
           dgvoodoo_backend.py
           dgvoodoo_cli.py
+          dgvoodoo_probe.py
           disc_bridge.py
           disc_sets_backend.py
           gpu_backend.py
