@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 from retro_optical import (  # noqa: E402
     OpticalExposure,
+    bubblejail_optical_preflight_invocation,
     bubblejail_optical_probe_invocation,
     validate_optical_probe_output,
 )
@@ -144,9 +145,48 @@ OPT_MOUNT_ABSENT=1
         self.assertIn("printf ok", args[6])
         self.assertNotIn("--debug-shell", args)
 
+    def test_preflight_preserves_exact_runtime_policy_and_replaces_only_tail(self):
+        runtime = [
+            "/usr/bin/bubblejail",
+            "run",
+            "--debug-bwrap-args",
+            "tmpfs",
+            "/dev/dri",
+            "--debug-bwrap-args",
+            "dev-bind",
+            "/dev/sr0",
+            "/dev/sr0",
+            "--",
+            "Bottles",
+        ]
+        args, script = bubblejail_optical_preflight_invocation(runtime, "Bottles", "printf ok\\n")
+        self.assertEqual(args[:-2], runtime[:-2])
+        self.assertEqual(args[-2:], ["--debug-shell", "Bottles"])
+        self.assertNotIn("--", args)
+        self.assertIn("PATH=/usr/bin:/bin", script)
+        self.assertIn("printf ok", script)
+
+    def test_preflight_rejects_ambiguous_or_unexpected_runtime_layout(self):
+        with self.assertRaisesRegex(RuntimeError, "termini esattamente"):
+            bubblejail_optical_preflight_invocation(
+                ["bubblejail", "run", "--", "Bottles", "extra"], "Bottles", "true"
+            )
+        with self.assertRaisesRegex(RuntimeError, "comando runtime Bubblejail inatteso"):
+            bubblejail_optical_preflight_invocation(
+                ["python", "run", "--", "Bottles"], "Bottles", "true"
+            )
+        with self.assertRaisesRegex(RuntimeError, "opzioni di probe inattese"):
+            bubblejail_optical_preflight_invocation(
+                ["bubblejail", "run", "--wait", "--", "Bottles"], "Bottles", "true"
+            )
+
     def test_rejects_option_like_instance(self):
         with self.assertRaisesRegex(RuntimeError, "Nome istanza"):
             bubblejail_optical_probe_invocation("--help", "true")
+        with self.assertRaisesRegex(RuntimeError, "Nome istanza"):
+            bubblejail_optical_preflight_invocation(
+                ["bubblejail", "run", "--", "--help"], "--help", "true"
+            )
 
 
 if __name__ == "__main__":
