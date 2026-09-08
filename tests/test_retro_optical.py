@@ -30,6 +30,21 @@ class RetroOpticalTests(unittest.TestCase):
         self.assertEqual(result["sg"], "")
         self.assertFalse(result["mount"])
 
+    def test_echoed_command_literals_do_not_count_as_probe_markers(self):
+        transcript = """\
+Instance already running.
+Sending command to the instance: ['/bin/sh', '-c', 'if ... printf \'OPT_VHBA_VISIBLE=1\\n\' ...']
+    printf 'OPT_CDEMU_DBUS_REACHABLE=1\\n'
+    printf 'OPT_MOUNT_PRESENT=1\\n'
+OPT_VHBA_HIDDEN=1
+OPT_CDEMU_DBUS_BLOCKED=1
+OPT_MOUNT_ABSENT=1
+"""
+        result = validate_optical_probe_output(OpticalExposure(), transcript)
+        self.assertTrue(result["vhba_hidden"])
+        self.assertTrue(result["cdemu_dbus_blocked"])
+        self.assertFalse(result["mount"])
+
     def test_ro_mount_only(self):
         exposure = OpticalExposure(mount_expected=True)
         text = BASE + "OPT_MOUNT_PRESENT=1\nOPT_MOUNT_DIRECTORY=1\nOPT_MOUNT_OPTIONS=ro,nosuid,nodev\n"
