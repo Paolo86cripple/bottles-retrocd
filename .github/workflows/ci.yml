@@ -24,6 +24,8 @@ jobs:
           cdemu_update_cli.py
           disc_bridge.py
           disc_sets_backend.py
+          display_backend.py
+          display_probe_cli.py
           gpu_backend.py
           multidisc_backend.py
           protection_scanner.py
