@@ -22,6 +22,9 @@ class FakeRunner:
         self.interface = "(uint32 7, uint32 0)\n"
         self.service_active = True
         self.dbus_reachable = True
+        self.module_path = f"/usr/lib/modules/{KERNEL}/updates/dkms/vhba.ko.zst"
+        self.module_owner = ""
+        self.module_owner_version = ""
 
     def __call__(self, args, timeout):
         args = tuple(args)
@@ -33,8 +36,13 @@ class FakeRunner:
             if version is None:
                 return CommandResult(1, f"error: package '{name}' was not found\n")
             return CommandResult(0, f"{name} {version}\n")
+        if args[:2] == ("pacman", "-Qo") and len(args) == 3:
+            if self.module_owner and args[2] == self.module_path:
+                version = self.module_owner_version or "1-1"
+                return CommandResult(0, f"{self.module_path} is owned by {self.module_owner} {version}\n")
+            return CommandResult(1, f"error: No package owns {args[2]}\n")
         if args == ("modinfo", "-n", "vhba"):
-            return CommandResult(0, f"/usr/lib/modules/{KERNEL}/updates/dkms/vhba.ko.zst\n")
+            return CommandResult(0, self.module_path + "\n")
         if args == ("systemctl", "--user", "is-active", "cdemu-daemon.service"):
             return CommandResult(0 if self.service_active else 3, "active\n" if self.service_active else "inactive\n")
         if args and args[0] == "gdbus":
@@ -88,19 +96,56 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(report.device_count, 1)
         self.assertTrue(report.vhba_control_char)
 
+    def test_kernel_bundled_vhba_passes_without_standalone_package(self):
+        runner = FakeRunner()
+        runner.packages.pop("vhba-module-dkms")
+        runner.module_path = f"/lib/modules/{KERNEL}/kernel/drivers/scsi/vhba/vhba.ko.zst"
+        runner.module_owner = "linux-cachyos"
+        runner.module_owner_version = "7.2.3-1"
+        report = self.inspect(runner)
+        self.assertTrue(report.ok, report.failures)
+        self.assertEqual(report.vhba_provider, "kernel:linux-cachyos")
+        command = update_command(report)
+        self.assertNotIn("vhba-module-dkms", command)
+        self.assertNotIn("vhba-module", command)
+
+    def test_kernel_bundled_vhba_does_not_require_headers_for_runtime(self):
+        runner = FakeRunner()
+        runner.packages.pop("vhba-module-dkms")
+        runner.module_path = f"/lib/modules/{KERNEL}/kernel/drivers/scsi/vhba/vhba.ko.zst"
+        runner.module_owner = "linux-cachyos"
+        runner.module_owner_version = "7.2.3-1"
+        tmp, sys_root, dev_root, modules_root = self.make_roots()
+        self.addCleanup(tmp.cleanup)
+        (modules_root / KERNEL / "build").rmdir()
+        report = inspect_lifecycle(
+            runner=runner,
+            kernel=KERNEL,
+            sys_root=sys_root,
+            dev_root=dev_root,
+            modules_root=modules_root,
+        )
+        self.assertTrue(report.ok, report.failures)
+        self.assertEqual(report.vhba_provider, "kernel:linux-cachyos")
+        self.assertFalse(report.kernel_headers_present)
+
     def test_cdemu_client_is_optional(self):
         runner = FakeRunner()
         runner.packages.pop("cdemu-client")
         report = self.inspect(runner)
         self.assertTrue(report.ok, report.failures)
+        self.assertNotIn("cdemu-client", update_command(report))
 
-    def test_stock_vhba_provider_is_rejected_on_cachyos(self):
+    def test_wrong_kernel_module_path_fails(self):
         runner = FakeRunner()
         runner.packages.pop("vhba-module-dkms")
         runner.packages["vhba-module"] = "20260313-43"
+        runner.module_path = "/usr/lib/modules/7.2.3-arch1-1/extramodules/vhba.ko.zst"
+        runner.module_owner = "vhba-module"
+        runner.module_owner_version = "20260313-43"
         report = self.inspect(runner)
         self.assertFalse(report.ok)
-        self.assertTrue(any("usare vhba-module-dkms" in item for item in report.failures))
+        self.assertTrue(any("fuori dalla directory del kernel corrente" in item for item in report.failures))
 
     def test_missing_headers_fail_for_dkms(self):
         runner = FakeRunner()
@@ -115,7 +160,7 @@ class LifecycleTests(unittest.TestCase):
             modules_root=modules_root,
         )
         self.assertFalse(report.ok)
-        self.assertTrue(any("headers del kernel corrente assenti" in item for item in report.failures))
+        self.assertTrue(any("headers del kernel corrente assenti per DKMS" in item for item in report.failures))
 
     def test_typed_interface_version_does_not_parse_uint32_as_version(self):
         runner = FakeRunner()
