@@ -20,7 +20,7 @@ class OpticalExposure:
     """Exact optical surface intentionally exposed to one Bottles launch.
 
     CDEmu itself, libMirage and the VHBA control device are never part of this
-    surface: they remain trusted host-side components.  Only a verified RO
+    surface: they remain trusted host-side components. Only a verified RO
     filesystem view and, when compatibility requires it, the exact CDEmu
     sr/sg mapping may cross the Bubblejail boundary.
     """
@@ -64,7 +64,7 @@ def bubblejail_optical_probe_invocation(instance: str, script: str) -> list[str]
 def optical_probe_script() -> str:
     """Return a read-only shell probe for the effective optical boundary.
 
-    The probe never writes to the mounted disc.  Read-only status is proven
+    The probe never writes to the mounted disc. Read-only status is proven
     from the mount namespace with findmnt, while device and D-Bus visibility
     are enumerated explicitly.
     """
@@ -124,27 +124,46 @@ exit 0
 """
 
 
-def _values(text: str, prefix: str) -> tuple[str, ...]:
+def _probe_lines(text: str) -> tuple[str, ...]:
+    """Return normalized output lines, excluding no text by position.
+
+    Bubblejail 0.10.x echoes the command sent to an already-running instance.
+    That diagnostic text contains the literal OPT_* strings from the shell
+    source. Security decisions must therefore match complete emitted marker
+    lines, never substrings of the full Bubblejail transcript.
+    """
+    return tuple(line.strip() for line in text.splitlines())
+
+
+def _has_marker(lines: tuple[str, ...], marker: str) -> bool:
+    return marker in lines
+
+
+def _values(lines: tuple[str, ...], prefix: str) -> tuple[str, ...]:
+    needle = prefix + "="
     return tuple(
         line.split("=", 1)[1].strip()
-        for line in text.splitlines()
-        if line.startswith(prefix + "=")
+        for line in lines
+        if line.startswith(needle)
     )
 
 
 def validate_optical_probe_output(exposure: OpticalExposure, text: str) -> dict[str, object]:
     """Fail closed unless the running jail exposes exactly the authorised surface."""
     exposure.validate()
+    lines = _probe_lines(text)
 
-    if "OPT_VHBA_VISIBLE=1" in text or "OPT_VHBA_HIDDEN=1" not in text:
+    if _has_marker(lines, "OPT_VHBA_VISIBLE=1") or not _has_marker(lines, "OPT_VHBA_HIDDEN=1"):
         raise RuntimeError("Retro Optical: /dev/vhba_ctl non risulta nascosto nella jail.")
 
-    if "OPT_GDBUS_MISSING=1" in text:
+    if _has_marker(lines, "OPT_GDBUS_MISSING=1"):
         raise RuntimeError("Retro Optical: gdbus assente; impossibile provare il blocco D-Bus CDEmu.")
-    if "OPT_CDEMU_DBUS_REACHABLE=1" in text or "OPT_CDEMU_DBUS_BLOCKED=1" not in text:
+    if _has_marker(lines, "OPT_CDEMU_DBUS_REACHABLE=1") or not _has_marker(
+        lines, "OPT_CDEMU_DBUS_BLOCKED=1"
+    ):
         raise RuntimeError("Retro Optical: il daemon CDEmu risulta raggiungibile dal gioco via D-Bus.")
 
-    visible_sr = set(_values(text, "OPT_SR_VISIBLE"))
+    visible_sr = set(_values(lines, "OPT_SR_VISIBLE"))
     expected_sr = {exposure.sr_path} if exposure.raw_expected else set()
     if visible_sr != expected_sr:
         raise RuntimeError(
@@ -152,7 +171,7 @@ def validate_optical_probe_output(exposure: OpticalExposure, text: str) -> dict[
             f"attesi={sorted(expected_sr)}, ottenuti={sorted(visible_sr)}."
         )
 
-    visible_sg = set(_values(text, "OPT_SG_VISIBLE"))
+    visible_sg = set(_values(lines, "OPT_SG_VISIBLE"))
     expected_sg = {exposure.sg_path} if exposure.sg_expected else set()
     if visible_sg != expected_sg:
         raise RuntimeError(
@@ -162,11 +181,15 @@ def validate_optical_probe_output(exposure: OpticalExposure, text: str) -> dict[
 
     mount_options = ""
     if exposure.mount_expected:
-        if "OPT_MOUNT_PRESENT=1" not in text or "OPT_MOUNT_DIRECTORY=1" not in text:
+        if not _has_marker(lines, "OPT_MOUNT_PRESENT=1") or not _has_marker(
+            lines, "OPT_MOUNT_DIRECTORY=1"
+        ):
             raise RuntimeError(f"Retro Optical: {JAIL_CD_TARGET} non è una directory disponibile nella jail.")
-        if "OPT_FINDMNT_MISSING=1" in text or "OPT_MOUNT_FINDMNT_FAILED=1" in text:
+        if _has_marker(lines, "OPT_FINDMNT_MISSING=1") or _has_marker(
+            lines, "OPT_MOUNT_FINDMNT_FAILED=1"
+        ):
             raise RuntimeError("Retro Optical: impossibile provare con findmnt che il mount sia read-only.")
-        values = _values(text, "OPT_MOUNT_OPTIONS")
+        values = _values(lines, "OPT_MOUNT_OPTIONS")
         if len(values) != 1:
             raise RuntimeError("Retro Optical: opzioni mount assenti o ambigue.")
         mount_options = values[0]
@@ -176,7 +199,7 @@ def validate_optical_probe_output(exposure: OpticalExposure, text: str) -> dict[
                 f"Retro Optical: {JAIL_CD_TARGET} non risulta read-only (opzioni={mount_options!r})."
             )
     else:
-        if "OPT_MOUNT_ABSENT=1" not in text or "OPT_MOUNT_PRESENT=1" in text:
+        if not _has_marker(lines, "OPT_MOUNT_ABSENT=1") or _has_marker(lines, "OPT_MOUNT_PRESENT=1"):
             raise RuntimeError(f"Retro Optical: {JAIL_CD_TARGET} è visibile senza autorizzazione.")
 
     return {
