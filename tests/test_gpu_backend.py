@@ -68,7 +68,9 @@ class GpuBackendTests(unittest.TestCase):
         self.assertIn("/dev/dri", args)
         self.assertIn("/dev/dri/card1", args)
         self.assertIn("/dev/dri/renderD128", args)
-        self.assertEqual(2, args.count("dev-bind"))
+        self.assertIn("/dev/null", args)
+        self.assertIn("/dev/vhba_ctl", args)
+        self.assertEqual(3, args.count("dev-bind"))
 
         script = "printf 'probe\\n'"
         attached_args, attached_input = bubblejail_gpu_probe_invocation(
@@ -148,10 +150,6 @@ GPU0:
         )
         self.assertEqual("AMD Radeon RX", post["deviceName"])
 
-        # Bubblejail's running-instance helper may not expose the optional
-        # vulkaninfo diagnostic binary. The post-launch proof must still pass
-        # when the effective DRM allow-list is proven, while the preflight must
-        # continue to fail closed without Vulkan evidence.
         drm_only = """GPU_DRI_PRIME=
 GPU_SELECTED_NODE_OK=/dev/dri/card1
 GPU_SELECTED_NODE_OK=/dev/dri/renderD128
