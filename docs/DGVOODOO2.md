@@ -36,10 +36,10 @@ The first implementation phase is deliberately GUI-independent.
 
 The backend:
 
-1. discovers normal Bottles under the Bubblejail private HOME;
+1. discovers normal Bottles under the Bubblejail private HOME or the exact `custom_bottles_path` configured by Bottles;
 2. accepts only bottle roots with `bottle.yml` and a normal `drive_c` directory;
 3. validates that the selected executable resolves inside that `drive_c`;
-4. parses the executable PE header and chooses dgVoodoo2 `x86` or `x64` payloads from the **game architecture**, never from the host architecture;
+4. parses the executable PE header and chooses dgVoodoo2 `x86` or `x64` payloads from the **target executable architecture**, never from the host architecture;
 5. validates the official release metadata and required SHA-256 digest;
 6. validates ZIP paths, rejects traversal/symlinks/duplicates and enforces size limits;
 7. installs only the explicitly selected wrappers;
@@ -57,11 +57,11 @@ Supported selectable wrapper payloads:
 - Glide: `Glide.dll`, `Glide2x.dll`, `Glide3x.dll`;
 - Glide3 Napalm: the alternate `Glide3x.dll` from the Napalm directory.
 
-Regular Glide3 and Napalm Glide3 are mutually exclusive because both produce `Glide3x.dll` in the game directory.
+Regular Glide3 and Napalm Glide3 are mutually exclusive because both produce `Glide3x.dll` in the target directory.
 
 ## Phase 7B: Bottles/Wine integration
 
-Copying a wrapper beside a game executable is only half of a Wine integration. The next phase must validate the effective Wine DLL load policy on the target system.
+Copying a wrapper beside a Windows executable is only half of a Wine integration. The next phase must validate the effective Wine DLL load policy on the target system.
 
 Preferred design, if confirmed by target tests:
 
@@ -69,9 +69,22 @@ Preferred design, if confirmed by target tests:
 - set only the exact DLL names selected for that executable to `native,builtin`;
 - snapshot any pre-existing per-application override values and restore them on uninstall;
 - never edit `bottle.yml` directly when Bottles exposes a supported CLI/registry path;
-- verify the loaded wrapper with runtime evidence before calling the integration active.
+- verify effective override/loader behavior with a non-game Windows probe inside the disposable test bottle before release.
 
 If per-application override semantics cannot be proven reliable with the installed Bottles/Wine runner, RetroCD will not fall back silently to broad bottle-global overrides. The safe fallback is to require a dedicated bottle for that title or to leave the override step manual until a narrower mechanism is available.
+
+## Pre-release no-game validation rule
+
+Until the first RetroCD release candidate, Point 7 validation must not require installing a real game. The disposable `retrocd-vodoo-test` bottle is the only target used for development tests.
+
+Allowed pre-release probes include:
+
+- existing Wine/Bottles system executables used read-only for PE inspection;
+- copies of non-game Windows utilities inside a dedicated test directory in the disposable bottle;
+- synthetic test fixtures created solely to exercise transaction, backup/restore and override logic;
+- official dgVoodoo2 runtime payloads downloaded and verified by the manager.
+
+Real DirectDraw/legacy-D3D/Glide game compatibility tests are deferred to the release/RC acceptance phase. This keeps development independent from game installation while still requiring all safety, reversibility and Wine-integration mechanics to be proven beforehand.
 
 ## Phase 7C: GUI and configuration
 
@@ -95,12 +108,14 @@ No wrapper is enabled automatically by game age or filename. Automatic API detec
 
 Before Point 7 can merge to `main`:
 
-1. CI must cover metadata parsing, PE architecture, ZIP validation, transaction rollback and modified-file refusal;
-2. target test must install into a disposable retro bottle and prove that unrelated bottle/game files are unchanged;
+1. CI must cover metadata parsing, Bottles default/custom storage resolution, PE architecture, ZIP validation, transaction rollback and modified-file refusal;
+2. target test must use only the disposable test bottle and prove that unrelated bottle files are unchanged;
 3. target test must prove uninstall restores an intentionally pre-existing DLL byte-for-byte;
 4. target test must prove an intentionally edited managed DLL blocks automatic restore;
-5. x86 must be tested first; x64 support remains available but is not considered target-validated until a suitable title is tested;
-6. at least one DirectDraw/legacy-D3D title and one Glide title should be tested if available;
+5. x86 transaction/override behavior must be target-tested first; x64 logic remains CI-covered until a suitable non-game target is available;
+6. per-application Wine override semantics and restore must be proven with a non-game Windows probe;
 7. GPU isolation must remain PASS on the selected GPU;
-8. game network remains OFF;
+8. network remains OFF for the tested Windows process;
 9. no dgVoodoo2 binaries are committed to the RetroCD repository or bundled into the RetroCD package.
+
+Real-title DirectDraw/Glide compatibility is **not** a prerequisite for merging Point 7 before packaging; it becomes an explicit release/RC acceptance item, at which point installing selected test games is permitted.
