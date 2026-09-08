@@ -15,6 +15,7 @@ _spec.loader.exec_module(_dg)
 Gtk = _dg.Gtk
 GLib = _dg.GLib
 
+from dgvoodoo_backend import manager_data_dir  # noqa: E402
 from dgvoodoo_probe import (  # noqa: E402
     clean_probe,
     prepare_probe,
@@ -232,7 +233,7 @@ class Window(_dg.Window):
                 "dgVoodooCpl.exe gestito non disponibile per questo target."
             )
 
-        log_dir = _dg.manager_data_dir() / "logs"
+        log_dir = manager_data_dir() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "dgvoodoo-cpl.log"
         command = [
