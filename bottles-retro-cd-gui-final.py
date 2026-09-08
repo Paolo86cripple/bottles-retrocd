@@ -15,7 +15,12 @@ _spec.loader.exec_module(_dg)
 Gtk = _dg.Gtk
 GLib = _dg.GLib
 
-from dgvoodoo_probe import clean_probe, probe_executable, probe_status  # noqa: E402
+from dgvoodoo_probe import (  # noqa: E402
+    clean_probe,
+    prepare_probe,
+    probe_executable,
+    probe_status,
+)
 
 
 class Window(_dg.Window):
@@ -36,6 +41,15 @@ class Window(_dg.Window):
         tool_row = self.dg_copy_override_btn.get_parent()
         if not isinstance(tool_row, Gtk.Box):
             raise RuntimeError("Riga strumenti dgVoodoo2 non trovata.")
+
+        self.dg_probe_create_btn = Gtk.Button(label="Crea probe test")
+        self.dg_probe_create_btn.set_tooltip_text(
+            "Crea C:\\RetroCD-dgVoodoo-Probe nella bottle selezionata; nessun gioco e nessun download dgVoodoo2."
+        )
+        self.dg_probe_create_btn.connect(
+            "clicked", lambda *_: self.background(self.create_dgvoodoo_probe)
+        )
+        tool_row.append(self.dg_probe_create_btn)
 
         self.dg_probe_clean_btn = Gtk.Button(label="Pulisci probe test")
         self.dg_probe_clean_btn.set_tooltip_text(
@@ -82,6 +96,16 @@ class Window(_dg.Window):
         except Exception:
             return False
 
+    def _probe_create_ready(self) -> bool:
+        if self.busy or not self._dg_bottles:
+            return False
+        try:
+            bottle = self.selected_dg_bottle()
+            root = probe_executable(bottle).parent
+            return not root.exists() and not root.is_symlink()
+        except Exception:
+            return False
+
     def _probe_cleanup_ready(self) -> bool:
         if self.busy or not self._selected_target_is_probe():
             return False
@@ -100,10 +124,49 @@ class Window(_dg.Window):
 
     def _update_dg_action_sensitivity(self, payload=None, activation=None):
         result = super()._update_dg_action_sensitivity(payload, activation)
-        button = getattr(self, "dg_probe_clean_btn", None)
-        if button is not None:
-            button.set_sensitive(self._probe_cleanup_ready())
+        create = getattr(self, "dg_probe_create_btn", None)
+        if create is not None:
+            create.set_sensitive(self._probe_create_ready())
+        clean = getattr(self, "dg_probe_clean_btn", None)
+        if clean is not None:
+            clean.set_sensitive(self._probe_cleanup_ready())
         return result
+
+    def create_dgvoodoo_probe(self):
+        self._dg_mutation_preflight()
+        bottle = self.selected_dg_bottle()
+        root = probe_executable(bottle).parent
+        if root.exists() or root.is_symlink():
+            raise _dg.DgVoodooError(
+                f"Creazione probe rifiutata: directory già presente: {root}"
+            )
+
+        status = prepare_probe(bottle)
+        GLib.idle_add(self._finish_probe_create_ui, bottle.name, status.executable)
+        return (
+            f"[PASS] Probe x86 creata: {status.root}. "
+            "Nessun gioco installato e nessun download dgVoodoo2 eseguito."
+        )
+
+    def _finish_probe_create_ui(self, bottle_name: str, executable: Path):
+        bottle = next((item for item in self._dg_bottles if item.name == bottle_name), None)
+        if bottle is None:
+            self._dg_target = None
+            self.dg_exe_entry.set_text("")
+            self.dg_target_status.set_text(
+                "Probe creata, ma la bottle non è più presente nella discovery corrente."
+            )
+            self.refresh_dgvoodoo_local_status()
+            return False
+
+        self._dg_target = executable.resolve(strict=True)
+        self.dg_exe_entry.set_text(str(self._dg_target.relative_to(bottle.drive_c)))
+        self.dg_target_status.set_text(
+            f"Target probe valido: {self._dg_target} · PE x86 · bottle {bottle.name}"
+        )
+        self._set_dg_wrapper_selection(())
+        self.refresh_dgvoodoo_local_status()
+        return False
 
     def clean_dgvoodoo_probe(self):
         self._dg_mutation_preflight()
@@ -148,9 +211,9 @@ class Window(_dg.Window):
         """Launch the graphical CPL without blocking the RetroCD GUI.
 
         The previous implementation waited synchronously for bottles-cli/bubblejail
-        to terminate and therefore reported only that the process had closed.  A
+        to terminate and therefore reported only that the process had closed. A
         graphical control panel must instead remain alive independently while the
-        RetroCD window stays responsive.  We retain a small diagnostic log so an
+        RetroCD window stays responsive. We retain a small diagnostic log so an
         immediate Wine/Bottles exit is visible rather than silently accepted.
         """
         self._dg_mutation_preflight()
