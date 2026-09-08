@@ -4,7 +4,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from cdemu_backend import CDEmuBackend
 from cdemu_lifecycle import format_report, inspect_lifecycle, update_command
 from sandbox_backend import INSTANCE, SandboxBackend
 
@@ -23,6 +22,13 @@ def _restart_user_daemon(should_start: bool) -> None:
 
 
 def _media_preflight() -> tuple[bool, str]:
+    # Keep the updater module importable in headless/static CI. PyGObject is only
+    # needed when this real host-side D-Bus preflight is actually executed.
+    try:
+        from cdemu_backend import CDEmuBackend
+    except Exception as exc:
+        return False, f"Backend CDEmu non disponibile: {exc}"
+
     try:
         backend = CDEmuBackend()
     except Exception as exc:
