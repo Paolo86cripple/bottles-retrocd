@@ -148,10 +148,6 @@ GPU0:
         )
         self.assertEqual("AMD Radeon RX", post["deviceName"])
 
-        # Bubblejail's running-instance helper may not expose the optional
-        # vulkaninfo diagnostic binary. The post-launch proof must still pass
-        # when the effective DRM allow-list is proven, while the preflight must
-        # continue to fail closed without Vulkan evidence.
         drm_only = """GPU_DRI_PRIME=
 GPU_SELECTED_NODE_OK=/dev/dri/card1
 GPU_SELECTED_NODE_OK=/dev/dri/renderD128
@@ -172,6 +168,27 @@ GPU_VULKANINFO_MISSING=1
                 hidden_nodes=["/dev/dri/card2"],
                 require_dri_prime=True,
             )
+
+    def test_echoed_command_literals_do_not_fake_gpu_markers(self):
+        gpu = self._info()
+        transcript = """Instance already running.
+Sending command to the instance: printf 'GPU_VULKANINFO_MISSING=1\\n'; printf 'GPU_HIDDEN_NODE_VISIBLE=%s\\n' /dev/dri/card2
+GPU_DRI_PRIME=
+GPU_SELECTED_NODE_OK=/dev/dri/card1
+GPU_SELECTED_NODE_OK=/dev/dri/renderD128
+GPU_HIDDEN_NODE_OK=/dev/dri/card2
+GPU0:
+    vendorID = 0x1002
+    deviceID = 0x7550
+    deviceName = AMD Radeon RX
+"""
+        result = validate_gpu_probe_output(
+            gpu,
+            transcript,
+            hidden_nodes=["/dev/dri/card2"],
+            require_dri_prime=False,
+        )
+        self.assertEqual("AMD Radeon RX", result["deviceName"])
 
     def test_probe_validation_rejects_visible_nonselected_node(self):
         with self.assertRaises(RuntimeError):
