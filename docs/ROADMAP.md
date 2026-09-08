@@ -28,6 +28,16 @@ This roadmap records the current agreed order of work. Security-sensitive steps 
    - no weakening of the Bubblejail boundary.
 8. **Arch/CachyOS packaging** — install/remove RetroCD cleanly and integrate required host components without duplicating privileged infrastructure.
 9. **Release hardening and polish** — final regression review, documentation, packaging/release artifacts and target-machine acceptance pass.
+10. **Optional libRashader + Slang shader integration for Windows games through Bottles** — future post-release point, to begin only after the libRashader integration in the AGS launcher is complete, stable and well understood.
+   - **completely optional and disabled by default**: with the feature OFF, the Windows-game launch path must remain behaviorally equivalent to the validated non-shader path;
+   - reuse the architectural lessons and proven integration strategy from the AGS launcher instead of developing a second experimental shader stack in parallel;
+   - per-game/per-bottle enablement and shader selection, never a mandatory global Wine/Bottles setting;
+   - support managed Slang shaders/presets and chains with explicit validation before launch;
+   - clean enable/disable/restore semantics with no permanent modification of original game files when avoidable;
+   - fail safely: shader initialization or preset failure must never require weakening Bubblejail, exposing extra host resources, or making the game dependent on libRashader to launch normally;
+   - preserve the existing strict GPU selection/isolation model and test both integrated and discrete GPU paths;
+   - keep shader assets/configuration separate from archival game media and from Redump/TOSEC verification inputs;
+   - dedicated compatibility/performance regression matrix before declaring the feature stable.
 
 ## Scope reminder
 
