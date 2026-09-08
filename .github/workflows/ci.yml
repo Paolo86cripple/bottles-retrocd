@@ -17,9 +17,11 @@ jobs:
           python -m py_compile
           bottles-retro-cd-gui.py
           bottles-retro-cd-gui-base.py
+          bottles-retro-cd-gui-lifecycle.py
           cdemu_backend.py
           cdemu_lifecycle.py
           cdemu_lifecycle_cli.py
+          cdemu_update_cli.py
           disc_bridge.py
           disc_sets_backend.py
           gpu_backend.py
