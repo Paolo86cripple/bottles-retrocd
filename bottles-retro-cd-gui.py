@@ -3,7 +3,7 @@
 
 The validated rc2/multidisc controller is kept in ``bottles-retro-cd-gui-base.py``.
 This entrypoint subclasses it to add the Redump/TOSEC verifier, the reviewed
-log-clear action and fail-closed GPU/Bubblejail launch validation without
+log-clear action and fail-closed GPU/Retro-Optical Bubblejail validation without
 rewriting the established CDEmu/multidisc controller.
 """
 from __future__ import annotations
@@ -34,6 +34,13 @@ from protection_scanner import (  # noqa: E402
     format_scan,
     scan_image,
 )
+from retro_optical import (  # noqa: E402
+    OpticalExposure,
+    bubblejail_optical_probe_invocation,
+    format_optical_probe_success,
+    optical_probe_script,
+    validate_optical_probe_output,
+)
 from verifier_backend import (  # noqa: E402
     CatalogIndex,
     descriptor_payloads,
@@ -48,6 +55,7 @@ class Window(_base.Window):
     def __init__(self, app):
         super().__init__(app)
         self.verifier = CatalogIndex()
+        self._last_optical_exposure: OpticalExposure | None = None
         self._install_clear_log_button()
         self.build_verifier_tab()
         self.refresh_verifier_status()
@@ -154,6 +162,65 @@ exit 0
             f"{actual.get('deviceName', '—')} · altre GPU nascoste={len(hidden_nodes)}"
         )
 
+    # ------------------------------------------------------------------
+    # Retro Optical boundary proof.
+    # ------------------------------------------------------------------
+    def runtime_bubblejail_args(
+        self,
+        d,
+        mount,
+        *,
+        network_on,
+        expose_mount,
+        raw_on,
+        sg_on,
+        gpu,
+        bridge=None,
+    ):
+        """Capture the exact optical policy already computed by the base launcher."""
+        if d is not None and raw_on and not d.sr_path:
+            raise RuntimeError("Retro Optical: esposizione raw richiesta ma mapping /dev/srX assente.")
+        if d is not None and raw_on and sg_on:
+            if not d.sg_path or not Path(d.sg_path).exists():
+                raise RuntimeError("Retro Optical: esposizione /dev/sgX richiesta ma mapping CDEmu assente.")
+
+        args = super().runtime_bubblejail_args(
+            d,
+            mount,
+            network_on=network_on,
+            expose_mount=expose_mount,
+            raw_on=raw_on,
+            sg_on=sg_on,
+            gpu=gpu,
+            bridge=bridge,
+        )
+
+        raw_expected = bool(d is not None and raw_on and d.sr_path)
+        sg_expected = bool(d is not None and raw_on and sg_on and d.sg_path)
+        exposure = OpticalExposure(
+            mount_expected=bool(bridge is not None or (mount and expose_mount)),
+            raw_expected=raw_expected,
+            sr_path=d.sr_path if raw_expected else "",
+            sg_expected=sg_expected,
+            sg_path=d.sg_path if sg_expected else "",
+        )
+        exposure.validate()
+        self._last_optical_exposure = exposure
+        return args
+
+    def _probe_optical_isolation(self, exposure: OpticalExposure) -> str:
+        args = bubblejail_optical_probe_invocation(
+            _base.INSTANCE,
+            optical_probe_script(),
+        )
+        proc = _base.run_cmd(args, timeout=20)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Probe Retro Optical post-avvio fallito con rc={proc.returncode}:\n{proc.stdout[-4000:]}"
+            )
+        result = validate_optical_probe_output(exposure, proc.stdout)
+        return format_optical_probe_success(exposure, result)
+
     def _wait_sandbox_state(self, running: bool, timeout: float = 4.0) -> bool:
         deadline = _base.time.monotonic() + timeout
         while _base.time.monotonic() < deadline:
@@ -186,7 +253,7 @@ exit 0
                 if not self.sandbox.running():
                     self._cleanup_inactive_live_session()
             except Exception as exc:
-                self.append_log(f"Cleanup dopo fallimento GPU: {exc}", True)
+                self.append_log(f"Cleanup dopo fallimento GPU/Retro Optical: {exc}", True)
 
     def test_selected_gpu(self):
         if self.sandbox.running():
@@ -208,8 +275,11 @@ exit 0
             )
 
         # The base launcher owns the complete CD/network/multidisc setup. Capture
-        # only its Bubblejail Popen so a failed post-launch GPU proof can terminate
-        # the exact process group before returning control to the user.
+        # only its Bubblejail Popen so a failed post-launch proof can terminate
+        # the exact process group before returning control to the user. The
+        # runtime_bubblejail_args override captures the exact optical exposure
+        # chosen by that same base launcher.
+        self._last_optical_exposure = None
         captured: list[object] = []
         real_popen = _base.subprocess.Popen
 
@@ -245,14 +315,19 @@ exit 0
             if not self._wait_sandbox_state(True, timeout=4.0):
                 raise RuntimeError("L'istanza Bubblejail avviata non risulta attiva.")
             postflight = self._probe_gpu_isolation(gpu, attached=True)
+            exposure = self._last_optical_exposure
+            if exposure is None:
+                raise RuntimeError("Policy Retro Optical del lancio non catturata.")
+            optical_postflight = self._probe_optical_isolation(exposure)
         except Exception as exc:
             self._terminate_failed_launch(launch_proc)
             raise RuntimeError(
-                f"Verifica GPU/Bubblejail post-avvio fallita; Bottles è stato terminato: {exc}"
+                f"Verifica GPU/Retro Optical post-avvio fallita; Bottles è stato terminato: {exc}"
             ) from exc
 
         self.append_log(postflight)
-        return str(result) + " · isolamento GPU verificato pre/post-avvio"
+        self.append_log(optical_postflight)
+        return str(result) + " · isolamento GPU e Retro Optical verificato post-avvio"
 
     def build_verifier_tab(self):
         page = self.page_box()
