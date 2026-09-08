@@ -21,12 +21,19 @@ This roadmap records the current agreed order of work. Security-sensitive steps 
    - lifecycle manager, updater negative paths and `Espelli tutto` target-tested successfully;
    - GTK/main-thread safety, GPU isolation, network-OFF, whitelist, persistent settings and verifier/source-immutability invariants regression-reviewed.
 7. **dgVoodoo2 manager** — **ACTIVE**, before packaging.
-   - **7A payload/transaction backend:** official `dege-diosg/dgVoodoo2` stable runtime release only; GitHub-published SHA-256 verification; default/custom Bottles storage resolution; PE x86/x64 detection; strict ZIP validation; explicit DirectX/Glide DLL selection; private manifest/backup; reversible uninstall; no binaries vendored in RetroCD;
-   - **7B Bottles/Wine integration:** validate per-application Wine DLL overrides first; snapshot/restore previous override values; never silently broaden to bottle-global overrides; prove override/loader behavior with non-game Windows probes in the disposable test bottle;
-   - **7C GUI/configuration:** bottle + executable selector, detected architecture, individual wrapper switches, version/cache/status, install/update/uninstall, override preview and per-game control-panel launch;
+   - **7A payload/transaction backend — COMPLETE/PASS:** official `dege-diosg/dgVoodoo2` stable runtime release only; GitHub-published SHA-256 verification; default/custom Bottles storage resolution; PE x86/x64 detection; strict ZIP validation; explicit DirectX/Glide DLL selection; private manifest/backup; reversible uninstall; no binaries vendored in RetroCD;
+     - target-machine x86 acceptance passed in disposable `retrocd-vodoo-test` using the configured custom Bottles path;
+     - official 2.87.4 archive verified, existing `DDraw.dll` restored byte-for-byte, existing `dgVoodoo.conf` preserved, unrelated sentinel unchanged;
+     - intentionally modified managed DLL correctly blocked automatic restore; after restoring the installed bytes, normal uninstall and clean removal passed.
+   - **7B Bottles/Wine integration — COMPLETE/PASS:** Wine-native `HKCU\\Software\\Wine\\AppDefaults\\<exe>\\DllOverrides` is used per executable; previous values are snapshotted/restored; no bottle-global fallback; Bottles per-program `WINEDLLOVERRIDES` collisions are detected because environment overrides take precedence over AppDefaults;
+     - target-machine baseline confirmed no stored program environment and no pre-existing per-app `ddraw` value;
+     - `ddraw=n,b` activation verified for the synthetic x86 probe, bottle-global overrides remained untouched, and RetroCD did not directly edit `bottle.yml` or `user.reg`;
+     - intentionally tampered `ddraw=b` correctly blocked automatic restore; value was returned to the managed state and deactivation restored the original absent baseline;
+     - payload uninstall then restored the original DLL byte-for-byte and final probe cleanup removed the disposable directory completely.
+   - **7C GUI/configuration — ACTIVE:** dedicated final GUI layer with bottle + executable selector, detected architecture, individual wrapper switches, release/cache/integrity status, payload install/restore, separate per-app activation/deactivation, exact override preview and per-target control-panel launch;
    - per-game/bottle installation rather than global DLL replacement;
    - preserve an existing per-game `dgVoodoo.conf` by default;
-   - reject automatic restore if a managed file changed after installation;
+   - reject automatic restore if a managed file or managed override changed after installation/activation;
    - upstream Wine/Proton support is explicitly unsupported, so integration remains optional and title-specific;
    - **no real game installation during Point-7 development**: pre-release target testing uses only the disposable `retrocd-vodoo-test` bottle, Wine/Bottles utilities and synthetic/non-game fixtures;
    - real DirectDraw/legacy-D3D/Glide title compatibility is deferred to release/RC acceptance;
