@@ -47,18 +47,56 @@ class OpticalExposure:
             raise RuntimeError("Retro Optical: sg_path presente senza esposizione sg autorizzata.")
 
 
-def bubblejail_optical_probe_invocation(instance: str, script: str) -> list[str]:
-    """Build the post-launch probe invocation for an already-running jail."""
-    if not instance or instance.startswith("-"):
-        raise RuntimeError(f"Nome istanza Bubblejail non valido: {instance!r}")
-    probe_script = (
+def _prefixed_probe_script(script: str) -> str:
+    return (
         f"PATH={OPTICAL_PROBE_PATH}\n"
         "export PATH\n"
         "LC_ALL=C\n"
         "export LC_ALL\n"
         + script
     )
-    return ["bubblejail", "run", "--wait", instance, "/bin/sh", "-c", probe_script]
+
+
+def bubblejail_optical_probe_invocation(instance: str, script: str) -> list[str]:
+    """Build the post-launch probe invocation for an already-running jail."""
+    if not instance or instance.startswith("-"):
+        raise RuntimeError(f"Nome istanza Bubblejail non valido: {instance!r}")
+    return [
+        "bubblejail",
+        "run",
+        "--wait",
+        instance,
+        "/bin/sh",
+        "-c",
+        _prefixed_probe_script(script),
+    ]
+
+
+def bubblejail_optical_preflight_invocation(
+    runtime_args: list[str] | tuple[str, ...],
+    instance: str,
+    script: str,
+) -> tuple[list[str], str]:
+    """Replace only the application tail of an exact runtime command.
+
+    The returned temporary jail therefore receives exactly the same Bubblewrap
+    arguments as the real Bottles launch (GPU, network, RO mount bank, raw sr/sg
+    devices, etc.) but executes ``--debug-shell`` instead of the application.
+    Any unexpected command layout is rejected rather than guessed.
+    """
+    if not instance or instance.startswith("-"):
+        raise RuntimeError(f"Nome istanza Bubblejail non valido: {instance!r}")
+    args = list(runtime_args)
+    if len(args) < 4 or Path(str(args[0])).name != "bubblejail" or args[1] != "run":
+        raise RuntimeError("Retro Optical: comando runtime Bubblejail inatteso; preflight rifiutato.")
+    if args.count("--") != 1 or args[-2:] != ["--", instance]:
+        raise RuntimeError(
+            "Retro Optical: impossibile provare che il comando runtime termini esattamente con '-- INSTANCE'."
+        )
+    if "--debug-shell" in args or "--wait" in args:
+        raise RuntimeError("Retro Optical: comando runtime contiene opzioni di probe inattese.")
+    probe_args = [*args[:-2], "--debug-shell", instance]
+    return probe_args, _prefixed_probe_script(script)
 
 
 def optical_probe_script() -> str:
@@ -125,12 +163,11 @@ exit 0
 
 
 def _probe_lines(text: str) -> tuple[str, ...]:
-    """Return normalized output lines, excluding no text by position.
+    """Return normalized lines for exact marker matching.
 
-    Bubblejail 0.10.x echoes the command sent to an already-running instance.
-    That diagnostic text contains the literal OPT_* strings from the shell
-    source. Security decisions must therefore match complete emitted marker
-    lines, never substrings of the full Bubblejail transcript.
+    Bubblejail 0.10.x echoes commands sent to an already-running instance. That
+    diagnostic text contains the literal OPT_* strings from the shell source,
+    so security decisions must match complete emitted lines, never substrings.
     """
     return tuple(line.strip() for line in text.splitlines())
 
@@ -149,7 +186,7 @@ def _values(lines: tuple[str, ...], prefix: str) -> tuple[str, ...]:
 
 
 def validate_optical_probe_output(exposure: OpticalExposure, text: str) -> dict[str, object]:
-    """Fail closed unless the running jail exposes exactly the authorised surface."""
+    """Fail closed unless the jail exposes exactly the authorised surface."""
     exposure.validate()
     lines = _probe_lines(text)
 
@@ -212,12 +249,17 @@ def validate_optical_probe_output(exposure: OpticalExposure, text: str) -> dict[
     }
 
 
-def format_optical_probe_success(exposure: OpticalExposure, result: dict[str, object]) -> str:
+def format_optical_probe_success(
+    exposure: OpticalExposure,
+    result: dict[str, object],
+    *,
+    phase: str = "post-avvio",
+) -> str:
     exposure.validate()
     mount = f"{JAIL_CD_TARGET}=RO" if exposure.mount_expected else f"{JAIL_CD_TARGET}=hidden"
     sr = exposure.sr_path if exposure.raw_expected else "hidden"
     sg = exposure.sg_path if exposure.sg_expected else "hidden"
     return (
-        "[PASS] Retro Optical post-avvio: "
+        f"[PASS] Retro Optical {phase}: "
         f"vhba=hidden · CDEmu D-Bus=blocked · sr={sr} · sg={sg} · {mount}"
     )
