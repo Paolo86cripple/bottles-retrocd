@@ -19,6 +19,13 @@ from dgvoodoo_probe import (
     tamper_refusal_probe,
     uninstall_probe,
 )
+from dgvoodoo_wine import (
+    activate_app_overrides,
+    activation_status,
+    deactivate_app_overrides,
+    query_app_override,
+    tamper_refusal_test as override_tamper_refusal_test,
+)
 from sandbox_backend import INSTANCE, SandboxBackend
 
 
@@ -37,6 +44,14 @@ def _find_bottle(name: str) -> tuple[object, BottleInfo]:
             f"Bottle {name!r} non trovata in {storage.root}. Disponibili: {names}"
         )
     return storage, bottle
+
+
+def _ensure_bottles_closed() -> None:
+    sandbox = SandboxBackend(INSTANCE)
+    if sandbox.running():
+        raise DgVoodooError(
+            "Chiudi Bottles/Bubblejail prima di modificare dgVoodoo2 o gli override Wine."
+        )
 
 
 def cmd_inventory(_args) -> int:
@@ -74,6 +89,7 @@ def cmd_inspect(args) -> int:
 
 
 def cmd_probe_prepare(args) -> int:
+    _ensure_bottles_closed()
     storage, bottle = _find_bottle(args.bottle)
     status = prepare_probe(bottle)
     print(f"Bottle storage: {storage.source} · {storage.root}")
@@ -87,16 +103,19 @@ def cmd_probe_prepare(args) -> int:
 def cmd_probe_status(args) -> int:
     _storage, bottle = _find_bottle(args.bottle)
     status = probe_status(bottle)
+    activation = activation_status(bottle, status.executable)
     print(f"Probe: {status.root}")
     print(f"Executable: {status.executable}")
     print(f"Baseline: {'PASS' if status.baseline_ok else 'MODIFICATA/INSTALLATA'}")
     print(f"DDraw SHA-256: {status.ddraw_sha256}")
     print(f"Config SHA-256: {status.config_sha256}")
     print(f"Unrelated SHA-256: {status.unrelated_sha256}")
+    print(f"Wine AppDefaults: {activation.state}")
     return 0
 
 
 def cmd_probe_install(args) -> int:
+    _ensure_bottles_closed()
     _storage, bottle = _find_bottle(args.bottle)
     result = install_probe(bottle)
     print(f"[PASS] dgVoodoo2 {result.release.version} installato nella sola probe.")
@@ -106,12 +125,13 @@ def cmd_probe_install(args) -> int:
     print("Wrapper: DDraw.dll x86")
     print("dgVoodoo.conf preesistente: preservato")
     print("unrelated.bin: invariato")
-    print(f"Wine override PREVIEW soltanto: ddraw=n,b")
+    print("Wine override PREVIEW soltanto: ddraw=n,b")
     print("Nessun override Wine applicato in questa fase.")
     return 0
 
 
 def cmd_probe_tamper(args) -> int:
+    _ensure_bottles_closed()
     _storage, bottle = _find_bottle(args.bottle)
     message = tamper_refusal_probe(bottle)
     print("[PASS] Modified-file refusal verificato.")
@@ -120,8 +140,62 @@ def cmd_probe_tamper(args) -> int:
     return 0
 
 
-def cmd_probe_uninstall(args) -> int:
+def cmd_probe_activate(args) -> int:
+    _ensure_bottles_closed()
     _storage, bottle = _find_bottle(args.bottle)
+    status = probe_status(bottle)
+    if status.baseline_ok:
+        raise DgVoodooError(
+            "La probe è ancora alla baseline: installa dgVoodoo2 con probe-install prima dell'override."
+        )
+    result = activate_app_overrides(bottle, status.executable, ["ddraw"])
+    observed = query_app_override(bottle, status.executable, "ddraw")
+    if observed != "n,b":
+        raise DgVoodooError(f"Override ddraw non verificato dopo activation: {observed!r}")
+    print("[PASS] Wine AppDefaults per-app attivato.")
+    print(f"Executable: {result.app_name}")
+    print("Chiave: HKCU\\Software\\Wine\\AppDefaults\\" + result.app_name + "\\DllOverrides")
+    print("ddraw = n,b (REG_SZ)")
+    print("Override globale bottle: NON modificato")
+    print("bottle.yml/user.reg: nessuna modifica diretta da RetroCD")
+    return 0
+
+
+def cmd_probe_override_tamper(args) -> int:
+    _ensure_bottles_closed()
+    _storage, bottle = _find_bottle(args.bottle)
+    status = probe_status(bottle)
+    message = override_tamper_refusal_test(bottle, status.executable, "ddraw")
+    print("[PASS] Modified-override refusal verificato.")
+    print(f"Rifiuto osservato: {message}")
+    print("ddraw è stato riportato a n,b; la transazione AppDefaults resta attiva.")
+    return 0
+
+
+def cmd_probe_deactivate(args) -> int:
+    _ensure_bottles_closed()
+    _storage, bottle = _find_bottle(args.bottle)
+    status = probe_status(bottle)
+    result = deactivate_app_overrides(bottle, status.executable)
+    observed = query_app_override(bottle, status.executable, "ddraw")
+    if observed is not None:
+        raise DgVoodooError(f"Override ddraw residuo dopo restore: {observed!r}")
+    print("[PASS] Wine AppDefaults per-app ripristinato.")
+    print(f"Executable: {result.app_name}")
+    print("ddraw: assente come nella baseline iniziale")
+    print("Stato transazione RetroCD: rimosso")
+    return 0
+
+
+def cmd_probe_uninstall(args) -> int:
+    _ensure_bottles_closed()
+    _storage, bottle = _find_bottle(args.bottle)
+    before = probe_status(bottle)
+    activation = activation_status(bottle, before.executable)
+    if activation.state != "inactive":
+        raise DgVoodooError(
+            f"Override Wine ancora {activation.state}: esegui probe-deactivate prima dell'uninstall."
+        )
     status = uninstall_probe(bottle)
     print("[PASS] Uninstall/restore dgVoodoo2 completato.")
     print(f"Probe: {status.root}")
@@ -131,7 +205,14 @@ def cmd_probe_uninstall(args) -> int:
 
 
 def cmd_probe_clean(args) -> int:
+    _ensure_bottles_closed()
     _storage, bottle = _find_bottle(args.bottle)
+    status = probe_status(bottle)
+    activation = activation_status(bottle, status.executable)
+    if activation.state != "inactive":
+        raise DgVoodooError(
+            f"Override Wine ancora {activation.state}: cleanup rifiutato."
+        )
     clean_probe(bottle)
     print("[PASS] Directory probe rimossa completamente.")
     print("Cleanup consentito solo dopo baseline byte-for-byte valida e senza file inattesi.")
@@ -180,6 +261,27 @@ def parser() -> argparse.ArgumentParser:
     )
     probe_tamper_p.add_argument("--bottle", required=True)
     probe_tamper_p.set_defaults(func=cmd_probe_tamper)
+
+    probe_activate_p = sub.add_parser(
+        "probe-activate",
+        help="Attiva ddraw=n,b via Wine AppDefaults solo per l'executable probe.",
+    )
+    probe_activate_p.add_argument("--bottle", required=True)
+    probe_activate_p.set_defaults(func=cmd_probe_activate)
+
+    probe_override_tamper_p = sub.add_parser(
+        "probe-override-tamper-test",
+        help="Verifica che un AppDefaults modificato blocchi il restore automatico.",
+    )
+    probe_override_tamper_p.add_argument("--bottle", required=True)
+    probe_override_tamper_p.set_defaults(func=cmd_probe_override_tamper)
+
+    probe_deactivate_p = sub.add_parser(
+        "probe-deactivate",
+        help="Ripristina il precedente AppDefaults per l'executable probe.",
+    )
+    probe_deactivate_p.add_argument("--bottle", required=True)
+    probe_deactivate_p.set_defaults(func=cmd_probe_deactivate)
 
     probe_uninstall_p = sub.add_parser(
         "probe-uninstall",
