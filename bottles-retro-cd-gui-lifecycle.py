@@ -24,19 +24,175 @@ from cdemu_lifecycle import (  # noqa: E402
     inspect_lifecycle,
     update_command,
 )
+from retro_optical import (  # noqa: E402
+    bubblejail_optical_preflight_invocation,
+    format_optical_probe_success,
+    optical_probe_script,
+    validate_optical_probe_output,
+)
 
 UPDATE_HELPER = Path(__file__).with_name("cdemu_update_cli.py")
+# Keep a stable reference to the original rc2 controller. The extended module
+# replaces its module-level Window symbol after defining its subclass, but the
+# real base class remains the second entry in the Python MRO.
+BASE_CONTROLLER = _ext.Window.__mro__[1]
+
+
+class _SubprocessProxy:
+    """Module-local Popen tracker without mutating subprocess.Popen globally."""
+
+    def __init__(self, real_module, captured: list[object]):
+        self._real = real_module
+        self._captured = captured
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def Popen(self, *args, **kwargs):
+        proc = self._real.Popen(*args, **kwargs)
+        command = args[0] if args else kwargs.get("args")
+        if (
+            isinstance(command, (list, tuple))
+            and command
+            and Path(str(command[0])).name == "bubblejail"
+            and "--" in command
+            and _ext._base.INSTANCE in command
+        ):
+            self._captured.append(proc)
+        return proc
 
 
 class Window(_ext.Window):
-    """Final Point-5 GUI extension for CDEmu/libMirage/VHBA lifecycle management."""
+    """Final Point-5 GUI extension for lifecycle and reviewed launch hardening."""
 
     def __init__(self, app):
         super().__init__(app)
         self._last_lifecycle_report: LifecycleReport | None = None
         self._prepared_update_command: tuple[str, ...] = ()
+        self._last_optical_preflight = ""
         self.build_lifecycle_tab()
 
+    # ------------------------------------------------------------------
+    # Final review launch path.
+    # ------------------------------------------------------------------
+    def runtime_bubblejail_args(
+        self,
+        d,
+        mount,
+        *,
+        network_on,
+        expose_mount,
+        raw_on,
+        sg_on,
+        gpu,
+        bridge=None,
+    ):
+        """Prove the exact final bwrap policy before allowing Bottles to start."""
+        args = super().runtime_bubblejail_args(
+            d,
+            mount,
+            network_on=network_on,
+            expose_mount=expose_mount,
+            raw_on=raw_on,
+            sg_on=sg_on,
+            gpu=gpu,
+            bridge=bridge,
+        )
+        exposure = self._last_optical_exposure
+        if exposure is None:
+            raise RuntimeError("Retro Optical: policy runtime non catturata prima del preflight.")
+
+        probe_args, input_text = bubblejail_optical_preflight_invocation(
+            args,
+            _ext._base.INSTANCE,
+            optical_probe_script(),
+        )
+        proc = _ext._base.run_cmd(probe_args, input_text=input_text, timeout=25)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Probe Retro Optical pre-avvio fallito con rc={proc.returncode}:\n{proc.stdout[-4000:]}"
+            )
+        try:
+            result = validate_optical_probe_output(exposure, proc.stdout)
+        except Exception as exc:
+            raise RuntimeError(
+                f"{exc}\nOutput probe Retro Optical pre-avvio:\n{proc.stdout[-4000:]}"
+            ) from exc
+        if not self._wait_sandbox_state(False, timeout=4.0):
+            raise RuntimeError(
+                "Il preflight Retro Optical ha lasciato un'istanza Bubblejail attiva; avvio rifiutato."
+            )
+        self._last_optical_preflight = format_optical_probe_success(
+            exposure,
+            result,
+            phase="pre-avvio",
+        )
+        return args
+
+    def launch_bottles(self):
+        """Final fail-closed launch: GPU preflight, optical preflight, then postflight."""
+        # Runs in the worker created by background(); GTK writes go through GLib.
+        gpu = self.selected_gpu()
+        gpu_preflight = self._probe_gpu_isolation(gpu, attached=False)
+        GLib.idle_add(self.append_log, gpu_preflight)
+        if not self._wait_sandbox_state(False, timeout=4.0):
+            raise RuntimeError(
+                "Il probe GPU pre-avvio non ha chiuso completamente Bubblejail; Bottles non viene avviato."
+            )
+
+        self._last_optical_exposure = None
+        self._last_optical_preflight = ""
+        captured: list[object] = []
+        real_subprocess = _ext._base.subprocess
+        _ext._base.subprocess = _SubprocessProxy(real_subprocess, captured)
+        try:
+            # Deliberately bypass the intermediate extension's legacy Popen
+            # tracker. All normal rc2 CD/network/multidisc setup still runs via
+            # the original controller and dispatches runtime_bubblejail_args()
+            # back to this final class for the exact optical preflight.
+            result = BASE_CONTROLLER.launch_bottles(self)
+        finally:
+            _ext._base.subprocess = real_subprocess
+
+        if len(captured) != 1:
+            proc = captured[-1] if captured else None
+            self._terminate_failed_launch(proc)
+            raise RuntimeError(
+                f"Impossibile identificare in modo univoco il processo Bubblejail avviato ({len(captured)} candidati); "
+                "avvio terminato per sicurezza."
+            )
+        launch_proc = captured[0]
+
+        optical_preflight = self._last_optical_preflight
+        if not optical_preflight:
+            self._terminate_failed_launch(launch_proc)
+            raise RuntimeError("Prova Retro Optical pre-avvio assente; Bottles è stato terminato.")
+        GLib.idle_add(self.append_log, optical_preflight)
+
+        try:
+            if not self._wait_sandbox_state(True, timeout=4.0):
+                raise RuntimeError("L'istanza Bubblejail avviata non risulta attiva.")
+            gpu_postflight = self._probe_gpu_isolation(gpu, attached=True)
+            exposure = self._last_optical_exposure
+            if exposure is None:
+                raise RuntimeError("Policy Retro Optical del lancio non catturata.")
+            optical_postflight = self._probe_optical_isolation(exposure)
+        except Exception as exc:
+            self._terminate_failed_launch(launch_proc)
+            raise RuntimeError(
+                f"Verifica GPU/Retro Optical post-avvio fallita; Bottles è stato terminato: {exc}"
+            ) from exc
+
+        GLib.idle_add(self.append_log, gpu_postflight)
+        GLib.idle_add(self.append_log, optical_postflight)
+        return (
+            str(result)
+            + " · isolamento GPU pre/post e Retro Optical pre/post verificato"
+        )
+
+    # ------------------------------------------------------------------
+    # Point 5B lifecycle GUI.
+    # ------------------------------------------------------------------
     def build_lifecycle_tab(self):
         page = self.page_box()
         self.add_tab(page, "Componenti")
@@ -238,6 +394,8 @@ class Window(_ext.Window):
         self._runtime_update_preflight()
         if not self._prepared_update_command:
             raise RuntimeError("Prepara prima l'aggiornamento.")
+        if not UPDATE_HELPER.is_file():
+            raise RuntimeError(f"Helper di aggiornamento mancante: {UPDATE_HELPER}")
 
         # Recompute immediately before launching. A changed provider/package set
         # invalidates the preview rather than silently executing a different command.
