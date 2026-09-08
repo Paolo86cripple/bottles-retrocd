@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 from retro_optical import (  # noqa: E402
     OpticalExposure,
     bubblejail_optical_probe_invocation,
+    bubblewrap_optical_control_mask_args,
     validate_optical_probe_output,
 )
 
@@ -19,16 +20,38 @@ OPT_VHBA_HIDDEN=1
 OPT_CDEMU_DBUS_BLOCKED=1
 """
 
+MASKED_BASE = """\
+OPT_VHBA_MASKED_NULL=1
+OPT_VHBA_DEVICE=1:3
+OPT_CDEMU_DBUS_BLOCKED=1
+"""
+
 
 class RetroOpticalTests(unittest.TestCase):
     def test_no_optical_surface(self):
         exposure = OpticalExposure()
         result = validate_optical_probe_output(exposure, BASE + "OPT_MOUNT_ABSENT=1\n")
         self.assertTrue(result["vhba_hidden"])
+        self.assertFalse(result["vhba_masked"])
+        self.assertEqual(result["vhba_state"], "hidden")
         self.assertTrue(result["cdemu_dbus_blocked"])
         self.assertEqual(result["sr"], "")
         self.assertEqual(result["sg"], "")
         self.assertFalse(result["mount"])
+
+    def test_masked_vhba_is_accepted_only_with_positive_marker(self):
+        exposure = OpticalExposure()
+        result = validate_optical_probe_output(exposure, MASKED_BASE + "OPT_MOUNT_ABSENT=1\n")
+        self.assertFalse(result["vhba_hidden"])
+        self.assertTrue(result["vhba_masked"])
+        self.assertEqual(result["vhba_state"], "masked-null")
+
+    def test_control_mask_binds_dev_null_over_vhba(self):
+        args = bubblewrap_optical_control_mask_args()
+        self.assertEqual(
+            args,
+            ["--debug-bwrap-args", "dev-bind", "/dev/null", "/dev/vhba_ctl"],
+        )
 
     def test_ro_mount_only(self):
         exposure = OpticalExposure(mount_expected=True)
@@ -65,6 +88,19 @@ class RetroOpticalTests(unittest.TestCase):
     def test_rejects_visible_vhba_control(self):
         text = "OPT_VHBA_VISIBLE=1\nOPT_CDEMU_DBUS_BLOCKED=1\nOPT_MOUNT_ABSENT=1\n"
         with self.assertRaisesRegex(RuntimeError, "vhba_ctl"):
+            validate_optical_probe_output(OpticalExposure(), text)
+
+    def test_rejects_ambiguous_vhba_proof(self):
+        text = (
+            "OPT_VHBA_HIDDEN=1\nOPT_VHBA_MASKED_NULL=1\n"
+            "OPT_CDEMU_DBUS_BLOCKED=1\nOPT_MOUNT_ABSENT=1\n"
+        )
+        with self.assertRaisesRegex(RuntimeError, "vhba_ctl"):
+            validate_optical_probe_output(OpticalExposure(), text)
+
+    def test_rejects_missing_stat_for_vhba_mask(self):
+        text = "OPT_STAT_MISSING=1\nOPT_VHBA_VISIBLE=1\nOPT_CDEMU_DBUS_BLOCKED=1\nOPT_MOUNT_ABSENT=1\n"
+        with self.assertRaisesRegex(RuntimeError, "stat"):
             validate_optical_probe_output(OpticalExposure(), text)
 
     def test_rejects_reachable_cdemu_dbus(self):
