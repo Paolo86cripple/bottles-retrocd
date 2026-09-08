@@ -218,7 +218,12 @@ exit 0
             raise RuntimeError(
                 f"Probe Retro Optical post-avvio fallito con rc={proc.returncode}:\n{proc.stdout[-4000:]}"
             )
-        result = validate_optical_probe_output(exposure, proc.stdout)
+        try:
+            result = validate_optical_probe_output(exposure, proc.stdout)
+        except Exception as exc:
+            raise RuntimeError(
+                f"{exc}\nOutput probe Retro Optical:\n{proc.stdout[-4000:]}"
+            ) from exc
         return format_optical_probe_success(exposure, result)
 
     def _wait_sandbox_state(self, running: bool, timeout: float = 4.0) -> bool:
@@ -253,7 +258,11 @@ exit 0
                 if not self.sandbox.running():
                     self._cleanup_inactive_live_session()
             except Exception as exc:
-                self.append_log(f"Cleanup dopo fallimento GPU/Retro Optical: {exc}", True)
+                GLib.idle_add(
+                    self.append_log,
+                    f"Cleanup dopo fallimento GPU/Retro Optical: {exc}",
+                    True,
+                )
 
     def test_selected_gpu(self):
         if self.sandbox.running():
@@ -265,10 +274,11 @@ exit 0
         return result
 
     def launch_bottles(self):
-        # First prove that the exact selected GPU policy can create a clean jail.
+        # This method runs in the worker thread created by background(). Never
+        # touch GTK widgets directly here: marshal all UI work through GLib.
         gpu = self.selected_gpu()
         preflight = self._probe_gpu_isolation(gpu, attached=False)
-        self.append_log(preflight)
+        GLib.idle_add(self.append_log, preflight)
         if not self._wait_sandbox_state(False, timeout=4.0):
             raise RuntimeError(
                 "Il probe GPU pre-avvio non ha chiuso completamente Bubblejail; Bottles non viene avviato."
@@ -325,8 +335,8 @@ exit 0
                 f"Verifica GPU/Retro Optical post-avvio fallita; Bottles è stato terminato: {exc}"
             ) from exc
 
-        self.append_log(postflight)
-        self.append_log(optical_postflight)
+        GLib.idle_add(self.append_log, postflight)
+        GLib.idle_add(self.append_log, optical_postflight)
         return str(result) + " · isolamento GPU e Retro Optical verificato post-avvio"
 
     def build_verifier_tab(self):
