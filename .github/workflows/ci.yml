@@ -26,6 +26,7 @@ jobs:
           cdemu_update_cli.py
           dgvoodoo_backend.py
           dgvoodoo_cli.py
+          dgvoodoo_policy.py
           dgvoodoo_probe.py
           dgvoodoo_state.py
           dgvoodoo_wine.py
