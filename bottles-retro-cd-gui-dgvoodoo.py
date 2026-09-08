@@ -33,7 +33,7 @@ from dgvoodoo_backend import (  # noqa: E402
     wine_overrides_value,
 )
 from dgvoodoo_state import InstallationState, inspect_installation  # noqa: E402
-from dgvoodoo_wine import (  # noqa: E402
+from dgvoodoo_policy import (  # noqa: E402
     activate_app_overrides,
     activation_status,
     deactivate_app_overrides,
@@ -69,9 +69,6 @@ class Window(_life.Window):
         self.refresh_dgvoodoo_bottles()
         self.refresh_dgvoodoo_local_status()
 
-    # ------------------------------------------------------------------
-    # UI construction and selection.
-    # ------------------------------------------------------------------
     def build_dgvoodoo_tab(self):
         page = self.page_box()
         self.add_tab(page, "dgVoodoo2")
@@ -183,8 +180,9 @@ class Window(_life.Window):
         note = Gtk.Label(
             label=(
                 "Payload e attivazione Wine sono separati. “Installa payload” copia soltanto i wrapper selezionati "
-                "accanto all'executable e crea backup/manifest. “Attiva per-app” aggiunge solo AppDefaults per il "
-                "basename di quell'executable. Disattivazione e disinstallazione ripristinano gli snapshot precedenti."
+                "accanto all'executable e crea backup/manifest. “Attiva per-app” aggiunge AppDefaults per il "
+                "basename di quell'executable: Wine usa il basename e RetroCD rifiuta due target gestiti con lo "
+                "stesso nome nella stessa bottle. Disattivazione e disinstallazione ripristinano gli snapshot precedenti."
             ),
             xalign=0,
             wrap=True,
@@ -404,9 +402,6 @@ class Window(_life.Window):
             self.dg_copy_override_btn.set_sensitive(not self.busy)
         return False
 
-    # ------------------------------------------------------------------
-    # Status and release inspection.
-    # ------------------------------------------------------------------
     def _local_dg_state(self) -> tuple[InstallationState | None, object | None]:
         if self._dg_target is None or not self._dg_bottles:
             return None, None
@@ -508,9 +503,6 @@ class Window(_life.Window):
         GLib.idle_add(self.refresh_dgvoodoo_local_status)
         return "\n".join(lines)
 
-    # ------------------------------------------------------------------
-    # Managed operations.
-    # ------------------------------------------------------------------
     def _dg_mutation_preflight(self):
         if self.sandbox.running():
             raise DgVoodooError(
@@ -663,8 +655,6 @@ class Window(_life.Window):
             self._update_dg_action_sensitivity()
 
 
-# The App inherited through lifecycle still resolves the concrete Window symbol
-# from the original base module at activation time.
 _life._ext._base.Window = Window
 App = _life.App
 
