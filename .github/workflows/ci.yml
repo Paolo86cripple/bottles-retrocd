@@ -22,6 +22,7 @@ jobs:
           cdemu_lifecycle.py
           cdemu_lifecycle_cli.py
           cdemu_update_cli.py
+          dgvoodoo_backend.py
           disc_bridge.py
           disc_sets_backend.py
           gpu_backend.py
