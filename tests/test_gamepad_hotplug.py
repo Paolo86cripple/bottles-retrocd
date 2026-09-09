@@ -71,7 +71,7 @@ class GamepadHotplugTests(unittest.TestCase):
             mock.patch.object(hotplug.SandboxBackend, "running", return_value=True),
             mock.patch.object(hotplug, "detect_host_gamepads", return_value=(device,)),
             mock.patch.object(hotplug, "attached_probe", side_effect=(before, after)),
-            mock.patch.object(hotplug.NS_HELPER, "is_file", return_value=True),
+            mock.patch.object(hotplug.Path, "is_file", return_value=True),
             mock.patch.object(hotplug.subprocess, "run", return_value=proc) as run,
         ):
             result = hotplug.reconcile_gamepads("Bottles")
@@ -81,6 +81,30 @@ class GamepadHotplugTests(unittest.TestCase):
         self.assertIn("event24", args)
         self.assertIn("--bind", args)
         self.assertIn("/dev/input/js0", args)
+
+    def test_initial_activation_is_non_destructive(self):
+        device = GamepadDevice(
+            name="Xbox",
+            js_node="/dev/input/js0",
+            event_nodes=("/dev/input/event24",),
+        )
+        probe = GamepadProbe(
+            input_dir_visible=True,
+            nodes={"js0": (True, True), "event24": (True, True)},
+            hidraw_nodes=(),
+        )
+        proc = SimpleNamespace(returncode=0, stdout="BOUND=event24\nBOUND=js0\n")
+        with (
+            mock.patch.object(hotplug.SandboxBackend, "running", return_value=True),
+            mock.patch.object(hotplug, "detect_host_gamepads", return_value=(device,)),
+            mock.patch.object(hotplug, "attached_probe", side_effect=(probe, probe)),
+            mock.patch.object(hotplug.Path, "is_file", return_value=True),
+            mock.patch.object(hotplug.subprocess, "run", return_value=proc) as run,
+        ):
+            hotplug.reconcile_gamepads("Bottles", replace_existing=False)
+        args = run.call_args.args[0]
+        self.assertNotIn("--remove", args)
+        self.assertIn("--bind", args)
 
 
 if __name__ == "__main__":
