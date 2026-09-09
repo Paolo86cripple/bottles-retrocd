@@ -161,6 +161,37 @@ class GamepadHotplugTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "rifiutata"):
             ns_helper._validate_sysfs_root(ns_helper.Path("/sys/class/input"))
 
+    def test_hotplug_helper_has_no_pid_namespace_dependency(self):
+        self.assertFalse(hasattr(ns_helper, "CLONE_NEWPID"))
+        self.assertTrue(hasattr(ns_helper, "OPEN_TREE_CLONE"))
+        self.assertTrue(hasattr(ns_helper, "MOVE_MOUNT_F_EMPTY_PATH"))
+
+    def test_fd_mount_api_uses_detached_mount_and_exact_target(self):
+        open_tree = mock.Mock(return_value=77)
+        move_mount = mock.Mock(return_value=0)
+        with (
+            mock.patch.object(ns_helper, "_open_tree_fn", open_tree),
+            mock.patch.object(ns_helper, "_move_mount_fn", move_mount),
+        ):
+            mount_fd = ns_helper._open_tree_clone(9)
+            ns_helper._move_mount_fd(mount_fd, ns_helper.Path("/dev/input/js0"))
+
+        self.assertEqual(77, mount_fd)
+        open_tree.assert_called_once_with(
+            9,
+            b"",
+            ns_helper.AT_EMPTY_PATH
+            | ns_helper.OPEN_TREE_CLONE
+            | ns_helper.OPEN_TREE_CLOEXEC,
+        )
+        move_mount.assert_called_once_with(
+            77,
+            b"",
+            ns_helper.AT_FDCWD,
+            b"/dev/input/js0",
+            ns_helper.MOVE_MOUNT_F_EMPTY_PATH,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
