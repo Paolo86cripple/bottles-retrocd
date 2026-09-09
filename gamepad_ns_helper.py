@@ -10,6 +10,7 @@ import stat
 from pathlib import Path
 
 CLONE_NEWNS = 0x00020000
+CLONE_NEWPID = 0x20000000
 CLONE_NEWUSER = 0x10000000
 MS_BIND = 4096
 MNT_DETACH = 2
@@ -96,10 +97,13 @@ def _socket_owner_pid(sock_inode: str) -> int:
         raise RuntimeError("Nessun processo possiede il socket helper Bubblejail.")
 
     host_mnt = _namespace_link(os.getpid(), "mnt")
-    sandbox_owners = [
-        pid for pid in owners
-        if _namespace_link(pid, "mnt") != host_mnt
-    ]
+    sandbox_owners: list[int] = []
+    for pid in owners:
+        try:
+            if _namespace_link(pid, "mnt") != host_mnt:
+                sandbox_owners.append(pid)
+        except RuntimeError:
+            continue
     if len(sandbox_owners) == 1:
         return sandbox_owners[0]
 
@@ -111,10 +115,13 @@ def _socket_owner_pid(sock_inode: str) -> int:
         return helper_named[0]
 
     host_user = _namespace_link(os.getpid(), "user")
-    child_user = [
-        pid for pid in sandbox_owners
-        if _namespace_link(pid, "user") != host_user
-    ]
+    child_user: list[int] = []
+    for pid in sandbox_owners:
+        try:
+            if _namespace_link(pid, "user") != host_user:
+                child_user.append(pid)
+        except RuntimeError:
+            continue
     if len(child_user) == 1:
         return child_user[0]
 
@@ -133,7 +140,7 @@ def find_instance_namespace_pid(instance: str) -> int:
     if not stat.S_ISSOCK(st.st_mode) or st.st_uid != os.getuid():
         raise RuntimeError("Il socket runtime Bubblejail non è un socket dell'utente corrente.")
     pid = _socket_owner_pid(_socket_inode(socket_path))
-    for ns_name in ("user", "mnt"):
+    for ns_name in ("user", "mnt", "pid"):
         ns_path = Path(f"/proc/{pid}/ns/{ns_name}")
         if not ns_path.exists():
             raise RuntimeError(f"Namespace {ns_name} non disponibile per PID {pid}.")
@@ -185,7 +192,7 @@ def _remove_target(name: str) -> None:
         pass
     except IsADirectoryError as exc:
         raise RuntimeError(f"Target input inatteso (directory): {target}") from exc
-    print(f"REMOVED={name}")
+    print(f"REMOVED={name}", flush=True)
 
 
 def _bind_fd(name: str, source_fd: int) -> None:
@@ -206,7 +213,20 @@ def _bind_fd(name: str, source_fd: int) -> None:
     if _libc.mount(os.fsencode(source), os.fsencode(target), None, MS_BIND, None) != 0:
         err = ctypes.get_errno()
         raise OSError(err, os.strerror(err), f"{source} -> {target}")
-    print(f"BOUND={name}")
+    print(f"BOUND={name}", flush=True)
+
+
+def _mutate_inside_namespace(
+    source_fds: dict[str, int],
+    remove_names: list[str],
+    namespace_pid: int,
+) -> None:
+    Path("/dev/input").mkdir(mode=0o755, parents=True, exist_ok=True)
+    for name in sorted(set(remove_names)):
+        _remove_target(name)
+    for name in sorted(source_fds):
+        _bind_fd(name, source_fds[name])
+    print(f"NAMESPACE_PID={namespace_pid}", flush=True)
 
 
 def mutate_instance(instance: str, bind_paths: list[str], remove_names: list[str]) -> None:
@@ -220,35 +240,50 @@ def mutate_instance(instance: str, bind_paths: list[str], remove_names: list[str
     remove_names = [_validate_node_name(name) for name in remove_names]
 
     source_fds: dict[str, int] = {}
-    user_fd = mnt_fd = -1
+    user_fd = mnt_fd = pid_fd = -1
     try:
-        # All host device FDs are opened before entering the sandbox namespace.
-        # After setns(), /proc/self/fd/N remains an exact reference to those
-        # already-authorised character devices; no host directory is exposed.
+        # Open host device FDs and all namespace FDs before changing namespace.
         for name, path in validated:
             source_fds[name] = os.open(path, os.O_PATH | os.O_CLOEXEC)
         user_fd = os.open(f"/proc/{namespace_pid}/ns/user", os.O_RDONLY | os.O_CLOEXEC)
         mnt_fd = os.open(f"/proc/{namespace_pid}/ns/mnt", os.O_RDONLY | os.O_CLOEXEC)
+        pid_fd = os.open(f"/proc/{namespace_pid}/ns/pid", os.O_RDONLY | os.O_CLOEXEC)
 
         current_user_ns = os.readlink("/proc/self/ns/user")
         target_user_ns = os.readlink(f"/proc/{namespace_pid}/ns/user")
         if current_user_ns != target_user_ns:
             os.setns(user_fd, CLONE_NEWUSER)
+
+        # setns(CLONE_NEWPID) affects only future children. Enter the mount
+        # namespace as well, then fork once: the child is visible through the
+        # sandbox's procfs, so /proc/self/fd/N resolves the host device FDs that
+        # were opened before setns. The parent performs no filesystem mutation.
+        current_pid_ns = os.readlink("/proc/self/ns/pid")
+        target_pid_ns = os.readlink(f"/proc/{namespace_pid}/ns/pid")
+        if current_pid_ns != target_pid_ns:
+            os.setns(pid_fd, CLONE_NEWPID)
         os.setns(mnt_fd, CLONE_NEWNS)
 
-        Path("/dev/input").mkdir(mode=0o755, parents=True, exist_ok=True)
-        for name in sorted(set(remove_names)):
-            _remove_target(name)
-        for name in sorted(source_fds):
-            _bind_fd(name, source_fds[name])
-        print(f"NAMESPACE_PID={namespace_pid}")
+        child = os.fork()
+        if child == 0:
+            try:
+                _mutate_inside_namespace(source_fds, remove_names, namespace_pid)
+            except BaseException as exc:
+                print(f"ERROR={type(exc).__name__}: {exc}", flush=True)
+                os._exit(1)
+            os._exit(0)
+
+        _, status = os.waitpid(child, 0)
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+            code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+            raise RuntimeError(f"Mutazione mount namespace fallita nel child (rc={code}).")
     finally:
         for fd in source_fds.values():
             try:
                 os.close(fd)
             except OSError:
                 pass
-        for fd in (user_fd, mnt_fd):
+        for fd in (user_fd, mnt_fd, pid_fd):
             if fd >= 0:
                 try:
                     os.close(fd)
