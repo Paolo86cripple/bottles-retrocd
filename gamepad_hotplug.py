@@ -25,6 +25,7 @@ class HotplugResult:
     devices: tuple[GamepadDevice, ...]
     nodes: tuple[str, ...]
     writable_nodes: tuple[str, ...]
+    udev_notified: bool
 
     def format(self, reason: str) -> str:
         names = (
@@ -36,9 +37,10 @@ class HotplugResult:
         writable = (
             ", ".join(self.writable_nodes) if self.writable_nodes else "nessuno"
         )
+        udev_state = "notified" if self.udev_notified else "initial-static"
         return (
             f"[PASS] Gamepad hotplug {reason}: {names} · nodi={nodes} · "
-            f"scrivibili={writable} · sysfs=exact · udev=notified · hidraw=hidden"
+            f"scrivibili={writable} · sysfs=exact · udev={udev_state} · hidraw=hidden"
         )
 
 
@@ -202,6 +204,7 @@ def reconcile_gamepads(
         devices=devices,
         nodes=tuple(sorted(expected, key=_node_sort_key)),
         writable_nodes=writable,
+        udev_notified=replace_existing,
     )
 
 
