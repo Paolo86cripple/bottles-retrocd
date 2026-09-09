@@ -7,6 +7,8 @@ from display_backend import (
     bubblewrap_display_args,
     normalize_display_backend,
     proton_wayland_environment,
+    required_bubblejail_display_services,
+    validate_bubblejail_display_services,
 )
 
 
@@ -16,6 +18,21 @@ class DisplayBackendTests(unittest.TestCase):
             {"GSETTINGS_BACKEND": "keyfile"},
             bottles_persistent_environment(),
         )
+
+    def test_cpak_style_display_service_requirements(self):
+        self.assertEqual((), required_bubblejail_display_services("auto"))
+        self.assertEqual(("wayland",), required_bubblejail_display_services("wayland"))
+        self.assertEqual(("x11", "wayland"), required_bubblejail_display_services("xwayland"))
+
+        validate_bubblejail_display_services({"wayland": {}}, "wayland")
+        validate_bubblejail_display_services({"x11": {}, "wayland": {}}, "xwayland")
+
+        with self.assertRaisesRegex(RuntimeError, r"\[wayland\]"):
+            validate_bubblejail_display_services({"x11": {}}, "xwayland")
+        with self.assertRaisesRegex(RuntimeError, r"\[x11\]"):
+            validate_bubblejail_display_services({"wayland": {}}, "xwayland")
+        with self.assertRaisesRegex(RuntimeError, "configurazione display illeggibile"):
+            validate_bubblejail_display_services(None, "wayland")
 
     def test_auto_only_adds_isolated_preferences_backend(self):
         self.assertEqual("auto", normalize_display_backend("AUTO"))
