@@ -24,6 +24,13 @@ from cdemu_lifecycle import (  # noqa: E402
     inspect_lifecycle,
     update_command,
 )
+from display_backend import (  # noqa: E402
+    DISPLAY_AUTO,
+    DISPLAY_BACKENDS,
+    DISPLAY_LABELS,
+    bubblewrap_display_args,
+    normalize_display_backend,
+)
 from retro_optical import (  # noqa: E402
     bubblejail_optical_preflight_invocation,
     format_optical_probe_success,
@@ -70,7 +77,89 @@ class Window(_ext.Window):
         self._last_lifecycle_report: LifecycleReport | None = None
         self._prepared_update_command: tuple[str, ...] = ()
         self._last_optical_preflight = ""
+        self._last_display_backend = normalize_display_backend(
+            self.settings.get("display_backend", DISPLAY_AUTO)
+        )
+        self._install_display_backend_selector()
         self.build_lifecycle_tab()
+
+    # ------------------------------------------------------------------
+    # Per-launch display backend selection.
+    # ------------------------------------------------------------------
+    def _install_display_backend_selector(self):
+        frame = Gtk.Frame(label="Backend display per questo avvio")
+        box = self.frame_box(frame)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box.append(row)
+        row.append(Gtk.Label(label="Display", xalign=0))
+        self.display_backend_model = Gtk.StringList.new(
+            [DISPLAY_LABELS[name] for name in DISPLAY_BACKENDS]
+        )
+        self.display_backend_drop = Gtk.DropDown(
+            model=self.display_backend_model,
+            hexpand=True,
+        )
+        selected = normalize_display_backend(
+            self.settings.get("display_backend", DISPLAY_AUTO)
+        )
+        self.display_backend_drop.set_selected(DISPLAY_BACKENDS.index(selected))
+        self.display_backend_drop.connect(
+            "notify::selected",
+            self._display_backend_changed,
+        )
+        row.append(self.display_backend_drop)
+
+        note = Gtk.Label(
+            label=(
+                "Auto non forza nulla. Wayland nativo abilita i controlli Proton/CachyOS Wayland; "
+                "XWayland disabilita esplicitamente il backend Wayland nativo e lascia il normale percorso "
+                "X11/XWayland già disponibile nella sandbox. La scelta modifica solo l'ambiente del runner: "
+                "rete, filesystem, GPU e Retro Optical restano invariati. I runner che non riconoscono queste "
+                "variabili mantengono il proprio comportamento."
+            ),
+            xalign=0,
+            wrap=True,
+        )
+        note.add_css_class("dim-label")
+        box.append(note)
+
+        parent = self.launch_btn.get_parent()
+        previous = self.launch_btn.get_prev_sibling()
+        if isinstance(parent, Gtk.Box) and previous is not None:
+            parent.insert_child_after(frame, previous)
+        else:
+            raise RuntimeError(
+                "Layout Sandbox inatteso: impossibile inserire il selettore display."
+            )
+
+    def _selected_display_backend(self) -> str:
+        selected = self.display_backend_drop.get_selected()
+        if selected == Gtk.INVALID_LIST_POSITION or selected >= len(DISPLAY_BACKENDS):
+            return DISPLAY_AUTO
+        return DISPLAY_BACKENDS[selected]
+
+    def _display_backend_changed(self, *_):
+        backend = self._selected_display_backend()
+        self.settings["display_backend"] = backend
+        self._last_display_backend = backend
+        try:
+            _ext._base.save_settings(self.settings)
+        except Exception as exc:
+            self.set_message(f"Impossibile salvare il backend display: {exc}", True)
+
+    @staticmethod
+    def _inject_display_args(args: list[str], backend: str) -> list[str]:
+        display_args = bubblewrap_display_args(backend)
+        if not display_args:
+            return args
+        try:
+            separator = args.index("--")
+        except ValueError as exc:
+            raise RuntimeError(
+                "Comando Bubblejail privo del separatore runtime; backend display non applicato."
+            ) from exc
+        return [*args[:separator], *display_args, *args[separator:]]
 
     # ------------------------------------------------------------------
     # Final review launch path.
@@ -98,6 +187,11 @@ class Window(_ext.Window):
             gpu=gpu,
             bridge=bridge,
         )
+
+        backend = self.ui_get(self._selected_display_backend)
+        args = self._inject_display_args(args, backend)
+        self._last_display_backend = backend
+
         exposure = self._last_optical_exposure
         if exposure is None:
             raise RuntimeError("Retro Optical: policy runtime non catturata prima del preflight.")
@@ -185,8 +279,13 @@ class Window(_ext.Window):
 
         GLib.idle_add(self.append_log, gpu_postflight)
         GLib.idle_add(self.append_log, optical_postflight)
+        display_label = DISPLAY_LABELS.get(
+            normalize_display_backend(self._last_display_backend),
+            DISPLAY_LABELS[DISPLAY_AUTO],
+        )
         return (
             str(result)
+            + f" · display {display_label}"
             + " · isolamento GPU pre/post e Retro Optical pre/post verificato"
         )
 
@@ -425,10 +524,13 @@ class Window(_ext.Window):
 
     def set_busy(self, busy: bool):
         super().set_busy(busy)
+        display = getattr(self, "display_backend_drop", None)
         check = getattr(self, "lifecycle_check_btn", None)
         prepare = getattr(self, "lifecycle_prepare_btn", None)
         copy = getattr(self, "lifecycle_copy_btn", None)
         launch = getattr(self, "lifecycle_launch_update_btn", None)
+        if display is not None:
+            display.set_sensitive(not busy)
         if check is not None:
             check.set_sensitive(not busy)
         report = getattr(self, "_last_lifecycle_report", None)
