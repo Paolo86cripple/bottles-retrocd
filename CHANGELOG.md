@@ -1,48 +1,79 @@
 # Changelog
 
-## Unreleased — Redump/TOSEC verifier final review candidate
+## 0.4.0
 
-- restored the previously reviewed Redump/TOSEC verifier work and integrated it into the current multidisc/GPU `main` lineage;
-- added read-only CUE/TOC/CCD/MDS payload resolution with canonical root containment and explicit rejection of descriptor path escape/Windows absolute references;
-- added one-pass streaming CRC32/MD5/SHA1 hashing and a persistent SQLite hash cache invalidated by device/inode/size/mtime/ctime changes;
-- added incremental Logiqx XML parsing into a persistent SQLite catalog, retaining source, DAT, description, serial, version and protection metadata;
-- exact verification now requires a complete 1:1 payload multiset against one DAT game; duplicate complete records remain `AMBIGUOUS` rather than being silently selected;
-- added exact multidisc-set verification without modifying archive files;
-- added official Redump PC and TOSEC updater paths restricted to HTTPS and an explicit official-host allow-list;
-- DAT updates are bounded, staged, parsed and indexed before installation; ZIP traversal/symlinks are rejected and post-swap failures restore the previous generation;
-- local DAT import copies metadata only into the verifier data area and leaves original DAT files untouched;
-- added a read-only protection scanner for ISO9660/Joliet and common raw-sector layouts plus streaming raw-signature detection;
-- protection scanning now also rejects oversized ISO directory extents with a 64 MiB fail-closed limit;
-- added explicit DAT↔scanner comparison while keeping scanner evidence independent from cryptographic DAT matching;
-- added `verifier_cli.py` for stats, verify, verify-set, scan, verify-scan and update/import diagnostics;
-- added a dedicated **Verifica** GTK tab;
-- restored the reviewed **Pulisci log** action using `_clear_log`; it clears the current `Gtk.TextBuffer` only and is disabled while the controller is busy;
-- preserved the already validated rc2/multidisc GUI controller in `bottles-retro-cd-gui-base.py`, with verifier and final launch hardening layered through the public entrypoint subclass;
-- incorporated the later GPU/Bubblejail fail-closed review: no implicit `Mesa default`, strict PCI/vendor/device/driver/DRM-node validation, mandatory pre-launch isolation probe, mandatory post-launch probe against the already-running Bubblejail instance, and termination of the exact launch process group if post-launch proof fails;
-- the manual GPU test now uses the same positive-proof isolation validator as normal Bottles launch;
-- hardened CI to compile all Python modules, treat `ResourceWarning` as an error, run the full suite and reject `os.system`, `shell=True`, `eval` and dynamic `exec` patterns;
-- final regression suite: **73 tests PASS** = 19 original sandbox/settings/multidisc/bridge + 8 GPU fail-closed + 35 verifier/updater + 12 scanner tests.
+First stable Bottles RetroCD release candidate.
 
-## Unreleased — multidisc review candidate
+### Sandbox / launch hardening
 
-- explicit Redump/TOSEC disc sets now start from exactly the selected descriptor (including Disc 1); autodetection remains advisory and is never persisted implicitly;
-- live multidisc now fails closed unless the active disc belongs to an explicit saved multidisc set;
-- added automatic post-Bottles cleanup polling, asynchronous cache cleanup and blocks GUI close while a live multidisc session is active;
-- the Test tab is now a cumulative application log for tests and normal operations; closing Bottles logs cleanup start immediately before the worker removes cache devices;
-- CDEmu cache cleanup revalidates device mappings/count/order before touching or removing appended devices;
-- `/mnt/cdemu` now points to a real empty private directory while media is being changed;
-- app config directory is hardened to mode `0700`; metadata files remain `0600`;
-- saved-set resolution uses exact path membership before naming-based autodetection in GUI, cache tests and live Bottles launch;
-- regression suite: 19 tests, including Disc 1 explicit-set creation, Redump path/mtime immutability, Alt/Rerelease membership and bridge neutral target.
+- reuse the dedicated Bubblejail `Bottles` instance with private HOME and deny-by-default host exposure;
+- network remains OFF by default and may be enabled only for the selected launch; persistent `[network]` is rejected;
+- GPU selection persists by stable PCI address and never silently falls back to Mesa default;
+- selected DRM card/render nodes are validated as live character devices, broad `/dev/dri` is masked, and only the selected GPU nodes are rebound;
+- mandatory pre-launch and already-running post-launch GPU/Vulkan proofs fail closed and terminate the exact launch process group on proof failure;
+- manual **Test Vulkan** uses the same validator;
+- added persistent display policy: Auto / native Wayland / XWayland;
+- XWayland keeps the Bottles GTK UI free to use Wayland while Wine/Proton uses the X11/XWayland path, without adding filesystem/network/GPU/optical permissions;
+- forced display backends validate the existing Bubblejail display services instead of silently modifying the profile;
+- Bottles global GSettings use the isolated `keyfile` backend so dark mode, temp/cache preferences and similar settings persist inside the private Bubblejail HOME;
+- added a stable application ID: `io.github.Paolo86cripple.BottlesRetroCD`.
 
-## Unreleased — GPU selector
+### Portable archive root
 
-- added dynamic GPU detection with stable PCI-address selection instead of `cardX` ordering;
-- prefer the integrated GPU on first use and persist the selected PCI address in `~/.config/bottles-retro-cd/config.toml` with mode `0600`;
-- apply the selected GPU per Bottles launch using Mesa `DRI_PRIME`;
-- added a Vulkan verification action that checks vendor/device identity inside Bubblejail;
-- strict GPU isolation masks Bubblejail's broad `/dev/dri` view and re-exposes only the selected GPU's `cardX` and `renderD*` nodes;
-- verified on the target dual-AMD system with both the Ryzen 7 9800X3D iGPU and Radeon RX 9070 XT, including successful Bottles launch.
+- configuration schema bumped to 2 with persistent `archive_root` alongside `gpu_pci` and `display_backend`;
+- removed the release-time dependency on a hardcoded `/run/media/<user>/Data` storage layout;
+- existing target installations migrate the historical `/run/media/<user>/Data/Downloads/retropc` path only when it actually exists; migration stores the path but never moves/modifies dump data;
+- new installations must choose the archive root explicitly;
+- the archive root and its ancestors are refused as persistent Bubblejail shares;
+- Bubblejail/integration tests now use real temporary host sentinels, avoiding false PASS results from non-existent machine-specific paths.
+
+### Retro Optical / CDEmu
+
+- CDEmu is controlled through its D-Bus API model; `cdemu-client` is optional and no longer required by `run-local.sh`;
+- fixed false failure on CDEmu `/dev/srX` when the block-layer `ro` flag is 0;
+- raw exposure validates the exact CDEmu-mapped Linux SCSI optical block device (type 5);
+- block-layer `ro` is diagnostic only; UDisks2 filesystem mounts remain fail-closed read-only;
+- raw `/dev/srX` exposure is OFF by default and opt-in for compatibility-sensitive titles;
+- `/dev/sgX` remains explicit, advanced and OFF by default;
+- CDEmu/libMirage/VHBA lifecycle diagnostics detect the effective provider, including kernel-bundled CachyOS VHBA;
+- component update flow requires explicit preview, terminal confirmation and post-update recheck.
+
+### Multidisc
+
+- explicit Redump/TOSEC disc sets start from exactly the selected descriptor; autodetection is advisory and never persisted implicitly;
+- live multidisc fails closed unless the active disc belongs to an explicit saved set;
+- added automatic post-Bottles cleanup polling and asynchronous cache cleanup;
+- cache cleanup revalidates device mappings/count/order before touching appended devices;
+- `/mnt/cdemu` points to a real empty private directory during media change;
+- saved-set resolution uses exact path membership before naming heuristics;
+- original Redump/TOSEC files, names and mtimes remain untouched.
+
+### Redump / TOSEC verifier
+
+- read-only CUE/TOC/CCD/MDS payload resolution with canonical root containment and rejection of descriptor path escape/absolute Windows references;
+- one-pass streaming CRC32/MD5/SHA1 hashing with a persistent SQLite cache invalidated by device/inode/size/mtime/ctime changes;
+- incremental Logiqx XML indexing into SQLite with source, description, serial, version and protection metadata;
+- exact verification requires a complete 1:1 payload multiset against one DAT game; duplicate complete records remain `AMBIGUOUS`;
+- exact multidisc-set verification without modifying archive files;
+- official Redump PC and TOSEC updater paths restricted to HTTPS and explicit official-host allow-lists;
+- bounded, staged DAT updates with ZIP traversal/symlink rejection, validation before install and rollback on failure;
+- local DAT import copies metadata only into verifier storage and leaves source DATs untouched;
+- read-only protection scanner for ISO9660/Joliet/common raw-sector layouts with bounded directory/file sampling and streaming raw signatures;
+- explicit DAT↔scanner comparison while keeping scanner evidence independent from cryptographic verification;
+- `verifier_cli.py` provides stats, verify, verify-set, scan, verify-scan and update/import diagnostics.
+
+### UI / diagnostics
+
+- seven tabs: CDEmu, Sandbox, Whitelist, Avanzate, Test, Verifica and Componenti;
+- Sandbox includes archive root, GPU, transient permissions and persistent display backend selection;
+- cumulative application log records normal operations and tests; **Pulisci log** clears only the visible in-memory buffer;
+- CI now explicitly compiles `display_backend.py` together with all other Python modules.
+
+### Validation
+
+- target-machine validation completed for both AMD GPUs, CDEmu/UDisks2, raw optical, explicit `/dev/sgX`, multidisc, verifier/source immutability, lifecycle/update negative paths, preference persistence, Wayland and XWayland;
+- Discworld Noir validated with `proton-cachyos-native` + D7VK; XWayland enters fullscreen directly while preserving audio and the existing sandbox/optical policy;
+- final pre-packaging regression suite: **130 tests PASS**, plus Python compilation, `ResourceWarning`-as-error, shell syntax and unsafe dynamic execution scan.
 
 ## 0.4.0-rc2
 
