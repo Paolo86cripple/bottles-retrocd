@@ -48,7 +48,7 @@ On an existing target installation that still uses the historical:
 
 RetroCD migrates only the **path setting** when that directory actually exists. It never copies, moves, renames or rewrites the archive. New installations must choose the archive root explicitly.
 
-The archive root and its parents are refused as persistent Bubblejail shares. Only the active optical mount/device is injected for a launch according to the selected Retro Optical policy.
+The archive root and its subdirectories may be explicitly whitelisted read-only. RW access to any part of the archive is forbidden, and its parents are refused in both modes. Selecting an archive does not share it automatically. Optical mounts/devices are injected separately according to the selected Retro Optical policy.
 
 ## Display backends
 

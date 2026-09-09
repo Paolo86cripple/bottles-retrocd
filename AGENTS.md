@@ -59,9 +59,9 @@ Security regressions are release blockers.
 - Host filesystem exposure is deny-by-default.
 - Persistent shares use an explicit Bubblejail whitelist with separate RO and RW paths.
 - Canonicalize and validate whitelist paths before writing configuration.
-- Reject real HOME, broad system roots, the configured RetroCD archive root and its ancestors, unsafe overlap, and equivalent over-broad paths.
+- Allow explicitly whitelisted RO access to the configured RetroCD archive root and its subdirectories. Reject RW access to any part of the archive, its ancestors in either mode, real HOME, broad system roots, unsafe overlap, and equivalent over-broad paths.
 - Dynamic optical/cache mounts into the jail must use `ro-bind`.
-- Never expose broad `/run/media`, `/mnt`, storage-root, or archive-root trees merely to make optical media work.
+- Never expose broad `/run/media`, `/mnt` or storage-root trees merely to make optical media work. Archive RO sharing requires an explicit whitelist entry; selecting an archive does not share it automatically.
 - Isolation tests must create a real temporary host sentinel and prove that it is invisible inside Bubblejail; do not infer isolation from a path that may not exist.
 
 ### Network
@@ -280,7 +280,7 @@ Validated target-machine paths include:
 - network OFF baseline and temporary network ON runner persistence;
 - verifier/source immutability and lifecycle/update negative paths.
 
-The current release-review branch CI passes **130 tests total**, plus Python compilation (including `display_backend.py`), `ResourceWarning`-as-error, shell syntax and forbidden dynamic-execution scanning.
+The PR #3 archive-share correction passes **132 tests total locally** (remote CI remains a merge gate), plus Python compilation (including `display_backend.py`), `ResourceWarning`-as-error, shell syntax and forbidden dynamic-execution scanning.
 
 The next target-machine gate before merge is the portable archive-root migration/selection plus the real sentinel integration test. After that, packaging may begin.
 

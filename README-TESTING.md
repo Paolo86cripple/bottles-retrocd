@@ -17,7 +17,7 @@ PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests -v
 bash -n run-local.sh
 ```
 
-Current expected count: **130 tests PASS**.
+Current expected count: **132 tests PASS**.
 
 CI also:
 
@@ -55,7 +55,7 @@ On the existing target machine, the previous `/run/media/<user>/Data/Downloads/r
 
 A new installation has no machine-specific archive default and must select one explicitly.
 
-The configured archive root and its ancestors are refused as persistent Bubblejail shares. Optical content is exposed only through the reviewed dynamic Retro Optical path.
+Explicit RO sharing of the configured archive root and its subdirectories is allowed; RW access to any part of the archive is forbidden. Ancestors remain forbidden in both modes. Verify that an archive RO whitelist entry passes audit, is readable inside Bubblejail and rejects writes, while the adjacent host sentinel stays hidden. Optical mounts/devices retain the reviewed dynamic Retro Optical policy.
 
 ## CDEmu + UDisks2
 

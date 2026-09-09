@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -53,15 +54,59 @@ class SandboxBackendTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.backend.set_whitelist(["/"], [])
 
-    def test_rejects_archive_root_and_parent(self):
+    def test_archive_whitelist_policy_and_audit(self):
         archive = Path(self.tmp.name) / "archive-parent" / "retropc"
-        archive.mkdir(parents=True)
+        child = archive / "game"
+        child.mkdir(parents=True)
+        alias = Path(self.tmp.name) / "archive-alias"
+        alias.symlink_to(archive, target_is_directory=True)
+        cases = [
+            (archive, "RO", True), (archive, "RW", False),
+            (child, "RO", True), (child, "RW", False),
+            (archive.parent, "RO", False), (archive.parent, "RW", False),
+            (alias, "RO", True), (alias, "RW", False),
+            (alias / "game", "RW", False),
+            (self.rw, "RW", True),
+        ]
+        with patch.object(sandbox_module, "RETROPC_ROOT", archive), patch.object(
+            self.backend, "running", return_value=False
+        ):
+            for path, mode, allowed in cases:
+                with self.subTest(path=path, mode=mode):
+                    rw = [str(path)] if mode == "RW" else []
+                    ro = [str(path)] if mode == "RO" else []
+                    if allowed:
+                        self.backend.set_whitelist(rw, ro)
+                        self.assertTrue(self.backend.audit().safe)
+                        key = "paths" if mode == "RW" else "read_only_paths"
+                        self.assertEqual(self.backend.config()["root_share"][key], [str(path.resolve())])
+                    else:
+                        before = self.backend.services_path.read_bytes()
+                        with self.assertRaises(RuntimeError):
+                            self.backend.set_whitelist(rw, ro)
+                        self.assertEqual(self.backend.services_path.read_bytes(), before)
+                    # Audit must also catch unsafe profiles edited outside RetroCD.
+                    self.backend.services_path.write_text(
+                        "[root_share]\npaths = " + json.dumps(rw)
+                        + "\nread_only_paths = " + json.dumps(ro) + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assertEqual(self.backend.audit().safe, allowed)
+
+    def test_archive_ro_does_not_override_home_or_system_restrictions(self):
+        for archive in (Path.home(), Path("/"), Path("/dev"), Path("/run")):
+            with self.subTest(archive=archive), patch.object(sandbox_module, "RETROPC_ROOT", archive):
+                with self.assertRaises(RuntimeError):
+                    self.backend._validate_whitelist([], [str(archive)])
+
+    def test_archive_ro_rejects_nested_rw_and_duplicate_modes(self):
+        archive = self.ro
+        child = archive / "game"
+        child.mkdir()
         with patch.object(sandbox_module, "RETROPC_ROOT", archive):
-            with patch.object(self.backend, "running", return_value=False):
-                with self.assertRaises(RuntimeError):
-                    self.backend.set_whitelist([str(archive)], [])
-                with self.assertRaises(RuntimeError):
-                    self.backend.set_whitelist([str(archive.parent)], [])
+            for rw in (archive, child):
+                with self.subTest(rw=rw), self.assertRaises(RuntimeError):
+                    self.backend._validate_whitelist([str(rw)], [str(archive)])
 
     def test_rejects_nested_binds(self):
         child = self.rw / "child"

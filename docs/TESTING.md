@@ -103,7 +103,7 @@ PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests -v
 bash -n run-local.sh
 ```
 
-Expected current count: **130 tests PASS**. CI also compiles every Python module including `display_backend.py` and rejects `os.system`, `shell=True`, `eval` and dynamic `exec` patterns.
+Expected current count: **132 tests PASS**. CI also compiles every Python module including `display_backend.py` and rejects `os.system`, `shell=True`, `eval` and dynamic `exec` patterns.
 
 ## Immediate pre-merge acceptance for `review/pre-packaging-cleanup`
 

@@ -24,7 +24,7 @@ First stable Bottles RetroCD release candidate.
 - removed the release-time dependency on a hardcoded `/run/media/<user>/Data` storage layout;
 - existing target installations migrate the historical `/run/media/<user>/Data/Downloads/retropc` path only when it actually exists; migration stores the path but never moves/modifies dump data;
 - new installations must choose the archive root explicitly;
-- the archive root and its ancestors are refused as persistent Bubblejail shares;
+- explicit RO shares of the archive root/subdirectories are allowed; RW access anywhere within the archive and ancestor shares in either mode are refused;
 - Bubblejail/integration tests now use real temporary host sentinels, avoiding false PASS results from non-existent machine-specific paths.
 
 ### Retro Optical / CDEmu

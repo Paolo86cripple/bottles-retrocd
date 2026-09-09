@@ -118,12 +118,14 @@ class SandboxBackend:
         home = Path.home().resolve(strict=False)
         archive = RETROPC_ROOT.resolve(strict=False)
 
-        # Never allow a persistent share broad enough to expose the real HOME
-        # or the whole RetroCD archive. Optical media is granted dynamically.
+        # Explicit RO access to the archive is allowed, but its ancestors stay
+        # hidden and no part of the archive may be shared writable.
         if p == Path("/") or self._is_same_or_parent(p, home):
             return f"{mode}:{p} espone HOME o un suo genitore"
-        if self._is_same_or_parent(p, archive):
-            return f"{mode}:{p} è troppo ampio (include l'archivio RetroCD)"
+        if p in archive.parents:
+            return f"{mode}:{p} è troppo ampio (include un genitore dell'archivio RetroCD)"
+        if mode == "RW" and self._is_same_or_parent(archive, p):
+            return f"{mode}:{p} consentirebbe scritture nell'archivio RetroCD"
 
         # Device/system trees should be granted dynamically by the CD launcher,
         # never as a persistent root_share.

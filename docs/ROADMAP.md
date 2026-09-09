@@ -8,7 +8,7 @@ The 0.4.0 feature set is frozen except for release blockers.
 4. Redump/TOSEC verifier and protection scanner — complete and target validated.
 5. Retro Optical / CDEmu + libMirage lifecycle — complete and target validated.
 6. Display and preference persistence — complete and target validated: Auto, native Wayland, XWayland, GSettings keyfile persistence.
-7. 0.4.0 pre-packaging review — automated gate complete at 130 tests PASS; final target archive-root/sentinel acceptance pending.
+7. 0.4.0 pre-packaging review — archive-share correction locally validated at 132 tests PASS; remote CI required; final target archive-root/sentinel acceptance pending.
 8. Arch/CachyOS packaging — immediate next step after review merge. Install only package-owned files, provide desktop integration and correct dependencies, and preserve all user config/archive/Bubblejail data on normal removal.
 9. 0.4.0 release — installed-package acceptance, final regression, tag and GitHub release.
 10. Legacy DirectX compatibility managers such as dgVoodoo2/DxWrapper — post-0.4.0, optional and OFF by default.

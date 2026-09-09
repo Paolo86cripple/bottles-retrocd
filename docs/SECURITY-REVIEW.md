@@ -9,7 +9,7 @@ The 0.4.0 pre-packaging candidate preserves the intended fail-closed Bottles/Win
 - Bottles/Wine runs in the dedicated Bubblejail instance with private HOME.
 - Persistent `[network]` is rejected; network is transient and OFF by default.
 - Whitelist paths are canonicalized and validated before writing.
-- Real HOME, archive root/ancestors, overlapping mounts and broad system roots are rejected.
+- Explicit archive-root/subdirectory RO shares are allowed. RW access anywhere within the archive, ancestors in either mode, real HOME, overlapping mounts and broad system roots are rejected. Whitelist writes and existing-profile audits enforce the same canonicalized policy.
 - `services.toml` is syntax-checked, backed up and atomically replaced.
 - Dynamic optical/cache mounts use `ro-bind`.
 - Isolation tests create real temporary host sentinels and prove they are hidden rather than assuming a named host path exists.
@@ -64,10 +64,10 @@ The 0.4.0 pre-packaging candidate preserves the intended fail-closed Bottles/Win
 
 ## Automated evidence
 
-Current pre-packaging branch CI passes:
+Local validation of the PR #3 archive-share correction passes (remote CI remains a merge gate):
 
 - compilation of every Python module, including `display_backend.py`;
-- **130/130 unit tests** with `ResourceWarning` promoted to errors;
+- **132/132 unit tests** with `ResourceWarning` promoted to errors;
 - `bash -n run-local.sh`;
 - source scan rejecting `os.system`, `shell=True`, `eval` and dynamic `exec` patterns.
 

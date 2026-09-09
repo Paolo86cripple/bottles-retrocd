@@ -14,7 +14,7 @@ The branch also aligns the runtime version/Application ID, CI module list and re
 
 ## Automated gate
 
-Current branch CI: **130 tests PASS**.
+PR #3 archive-share correction: **132 tests PASS locally**. Remote CI must pass on the correction commit before merge.
 
 Additional gates:
 
@@ -35,7 +35,7 @@ The release no longer hardcodes a specific removable-media/storage location. On 
 
 New installations have no implicit machine-specific archive location and must select the archive root explicitly from the Sandbox tab.
 
-The configured archive root and its ancestors are rejected as persistent Bubblejail root shares. Active optical content remains injected dynamically according to the existing Retro Optical policy.
+Correction to PR #3: the configured archive root and its subdirectories may be explicitly shared RO. RW access anywhere within the archive and ancestor shares in either mode are rejected, including canonicalized symlink aliases. The same policy applies when saving a whitelist and auditing an existing profile. Selecting the archive does not automatically share it. Optical mounts/devices retain the existing dynamic Retro Optical policy.
 
 The Bubblejail test now creates a real temporary non-whitelisted host sentinel adjacent to the archive and requires it to be invisible inside the jail. The CD→Bubblejail integration path likewise uses temporary real sentinel directories rather than assuming `Data/progetti` or `Data/SteamLibrary` exist.
 
