@@ -16,7 +16,21 @@ First stable Bottles RetroCD release candidate.
 - XWayland keeps the Bottles GTK UI free to use Wayland while Wine/Proton uses the X11/XWayland path, without adding filesystem/network/GPU/optical permissions;
 - forced display backends validate the existing Bubblejail display services instead of silently modifying the profile;
 - Bottles global GSettings use the isolated `keyfile` backend so dark mode, temp/cache preferences and similar settings persist inside the private Bubblejail HOME;
+- the Sandbox page is vertically scrollable so all release controls remain reachable on smaller windows;
 - added a stable application ID: `io.github.Paolo86cripple.BottlesRetroCD`.
+
+### Gamepad
+
+- standard gamepad access uses Bubblejail's built-in `[joystick]` service rather than a broad `/dev/input` share;
+- pre-launch **Test gamepad** compares the exact host/jail `jsX` + matching `eventX` surface, requires readability and rejects unrelated input nodes or `/dev/hidraw*` exposure;
+- added a Sandbox gamepad status/toggle and dedicated hotplug status reporting;
+- after Bottles launch, RetroCD monitors only supported controller-node identity and keeps the already-running jail synchronized on physical add/remove/reconnect;
+- dynamic reconciliation passes only validated gamepad device FDs, recreates the matching minimal sysfs subtree and re-probes the jail after each change;
+- initial activation is non-destructive and reports `udev=initial-static` because Wine starts with the existing static Bubblejail joystick surface;
+- actual disconnect/reconnect emits matching libudev remove/add notifications inside Bubblejail's network namespace for Wine/winebus and reports `udev=notified`;
+- node numbering is not assumed stable across reconnect; the accepted surface is always compared with the current host-detected controller nodes;
+- any namespace/sysfs/udev/isolation failure reports `[FAIL] Gamepad hotplug`; there is no permissive fallback;
+- `/dev/hidraw*` remains excluded and Switch/gyro hidraw support is deliberately out of scope for 0.4.0.
 
 ### Portable archive root
 
@@ -65,15 +79,17 @@ First stable Bottles RetroCD release candidate.
 ### UI / diagnostics
 
 - seven tabs: CDEmu, Sandbox, Whitelist, Avanzate, Test, Verifica and Componenti;
-- Sandbox includes archive root, GPU, transient permissions and persistent display backend selection;
-- cumulative application log records normal operations and tests; **Pulisci log** clears only the visible in-memory buffer;
-- CI now explicitly compiles `display_backend.py` together with all other Python modules.
+- Sandbox includes archive root, GPU, transient permissions, persistent display backend, gamepad controls and a vertical scroller;
+- cumulative application log records normal operations, security probes and gamepad hotplug transitions; **Pulisci log** clears only the visible in-memory buffer;
+- CI explicitly compiles the display/gamepad wrapper, hotplug monitor and namespace helper together with all other Python modules.
 
 ### Validation
 
 - target-machine validation completed for both AMD GPUs, CDEmu/UDisks2, raw optical, explicit `/dev/sgX`, multidisc, verifier/source immutability, lifecycle/update negative paths, preference persistence, Wayland and XWayland;
 - Discworld Noir validated with `proton-cachyos-native` + D7VK; XWayland enters fullscreen directly while preserving audio and the existing sandbox/optical policy;
-- final pre-packaging regression suite: **130 tests PASS**, plus Python compilation, `ResourceWarning`-as-error, shell syntax and unsafe dynamic execution scan.
+- Xbox One S static Bubblejail controller path validated with only `js0` + matching `event24`, readable/writable, no unrelated input or hidraw exposure, and responding inputs;
+- exact-node gamepad hotplug/sysfs/udev implementation is covered by the automated suite and awaits final physical disconnect/reconnect target validation before merge;
+- final pre-packaging regression suite: **146 tests PASS** on the hotplug implementation, plus Python compilation, `ResourceWarning`-as-error, shell syntax and unsafe dynamic execution scan.
 
 ## 0.4.0-rc2
 

@@ -15,6 +15,8 @@ Current release candidate: **0.4.0**.
 - native Wayland with an explicit XWayland compatibility fallback;
 - persistent Bottles global preferences inside the private jail HOME through the GLib keyfile backend;
 - configurable persistent RetroCD archive root with migration from the previous target-machine path, without moving or modifying dump files;
+- standard gamepad support through Bubblejail `[joystick]`, exposing only the detected `jsX` plus matching `eventX` nodes and never broad `/dev/input`;
+- exact-node gamepad disconnect/reconnect support for a running Bottles instance, with the matching minimal sysfs subtree and internal udev notifications for Wine/winebus while keeping `/dev/hidraw*` hidden;
 - CDEmu control over D-Bus using the same daemon API model as gCDEmu;
 - UDisks2 mount verification in read-only mode;
 - optional raw optical-device exposure for Wine, accepted only when it matches the CDEmu D-Bus mapping and is validated as a Linux SCSI optical block device;
@@ -29,7 +31,7 @@ Current release candidate: **0.4.0**.
 The interface is split into seven tabs:
 
 1. **CDEmu** — drive selection, image load/eject, multidisc and UDisks2 RO status.
-2. **Sandbox** — archive root, per-launch GPU, network/optical permissions, display backend, GPU Vulkan/isolation test and Bottles launch.
+2. **Sandbox** — vertically scrollable release controls for archive root, per-launch GPU, network/optical permissions, display backend, gamepad status/test, GPU Vulkan/isolation test and Bottles launch.
 3. **Whitelist** — persistent Bubblejail `root_share` RO/RW management.
 4. **Avanzate** — DPM, transfer-rate, bad-sector and DVD CSS emulation.
 5. **Test** — cumulative application log plus CDEmu/UDisks2, Bubblejail, bridge/cache and end-to-end CD → Bubblejail tests.
@@ -67,6 +69,18 @@ GSETTINGS_BACKEND=keyfile
 ```
 
 so settings such as dark mode and temporary/cache preferences persist in Bubblejail's private HOME without exposing the host dconf database.
+
+## Gamepad isolation and hotplug
+
+Gamepad support is explicit and persistent at Bubblejail profile level through `[joystick]`. RetroCD does not add a broad `/dev/input` share and does not expose `/dev/hidraw*` for the 0.4.0 standard-controller path.
+
+Before launch, **Test gamepad** compares the host controller surface with the jail and requires only the detected `jsX` node plus its matching evdev `eventX` node(s), all readable, with no unrelated input nodes and no hidraw devices.
+
+After Bottles starts, a host-side RetroCD monitor watches only the identity of supported gamepad nodes. The initial activation is deliberately non-destructive and does not synthesize a udev event because Wine starts with the already-present static Bubblejail joystick surface; the log reports `udev=initial-static`. On a real disconnect/reconnect, RetroCD rebuilds only the exact current `jsX/eventX` surface, binds the matching minimal sysfs subtree, and emits matching libudev remove/add notifications inside Bubblejail's network namespace so Wine/winebus can observe the change; successful physical changes report `udev=notified`.
+
+The implementation fails closed. If namespace entry, exact sysfs reconstruction, udev notification or post-change jail probing cannot be proven, RetroCD reports `[FAIL] Gamepad hotplug` rather than widening device access. Device numbers may change after reconnect; the security invariant is exact agreement with the controller nodes currently detected on the host, not a fixed `event24` number.
+
+Switch/gyro paths that require hidraw are deliberately out of scope for 0.4.0.
 
 ## GPU/Bubblejail launch policy
 
@@ -118,9 +132,12 @@ The 0.4.0 candidate has been validated on the target CachyOS system for:
 - static bridge and live multidisc swaps;
 - Discworld Noir three-disc Redump set;
 - Discworld Noir with `proton-cachyos-native` + D7VK: native Wayland works, while XWayland enters fullscreen directly;
+- Xbox One S controller static Bubblejail path: only `js0` + matching `event24` visible, readable/writable, no unrelated input nodes, no `hidraw`, and inputs responding;
 - verifier/source immutability and lifecycle/update negative paths.
 
-Current CI: **130 unit tests PASS**. CI also compiles every Python module including `display_backend.py`, treats `ResourceWarning` as an error, checks shell syntax and scans for unsafe dynamic execution patterns.
+The exact-node gamepad hotplug/sysfs/udev path is implemented and covered by automated tests but still requires its final physical disconnect/reconnect validation on the target machine before merge.
+
+Current CI regression suite: **146 unit tests PASS** on the gamepad hotplug implementation. CI also compiles every Python module including the display/gamepad wrappers and namespace helper, treats `ResourceWarning` as an error, checks shell syntax and scans for unsafe dynamic execution patterns.
 
 ## Run locally
 
@@ -130,7 +147,7 @@ Nothing is installed by this tree:
 ./run-local.sh
 ```
 
-Required runtime commands include `python3`, `bubblejail`, `findmnt`, `ip` and `vulkaninfo`. `cdemu-client` is not required; RetroCD controls CDEmu through D-Bus. `udisksctl` is required for UDisks2 RO mounts and live multidisc operation.
+Required runtime commands include `python3`, `bubblejail`, `findmnt`, `ip` and `vulkaninfo`. `cdemu-client` is not required; RetroCD controls CDEmu through D-Bus. `udisksctl` is required for UDisks2 RO mounts and live multidisc operation. Standard gamepad support uses Bubblejail's built-in `[joystick]` service and adds no separate gamepad runtime package dependency.
 
 The existing Bubblejail instance is expected at:
 
@@ -153,6 +170,8 @@ python verifier_cli.py update tosec
 ## Important security boundary
 
 The GTK controller, verifier, CDEmu daemon and libMirage run on the host as the logged-in user. Bubblejail protects **Bottles/Wine**, not these host-side components. Consequently all host-side parsing paths are written fail-closed and archive inputs are treated as untrusted data.
+
+The gamepad hotplug monitor/helper is part of the host-side controller. It enters only the namespaces of the already-running `Bottles` Bubblejail instance and passes only validated gamepad device/sysfs references; it does not create a persistent broad device share.
 
 Persistent `[network]` in `services.toml` is rejected. The GUI only enables Bottles networking transiently for the selected launch. The verifier updater has its own narrower HTTPS/official-host policy.
 

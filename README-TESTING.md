@@ -17,18 +17,18 @@ PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests -v
 bash -n run-local.sh
 ```
 
-Current expected count: **132 tests PASS**.
+Current expected count: **146 tests PASS**.
 
 CI also:
 
-- compiles every application module, including `display_backend.py`;
+- compiles every application module, including the final display/gamepad GUI wrapper, `gamepad_hotplug.py` and `gamepad_ns_helper.py`;
 - promotes `ResourceWarning` to an error;
 - checks `run-local.sh` syntax;
 - rejects `os.system`, `shell=True`, `eval` and dynamic `exec` in Python paths.
 
 ## Final pre-packaging target-machine gate
 
-The GPU/optical/display paths have already passed target-machine validation. The remaining review-specific gate is the new portable archive-root migration/selector and real-sentinel isolation check.
+The GPU/optical/display paths and the static Xbox controller Bubblejail path have already passed target-machine validation. The remaining release gate covers archive-root portability, Sandbox scroll, exact-node physical gamepad hotplug, real-sentinel isolation and one final launch regression.
 
 With Bottles fully closed:
 
@@ -36,12 +36,39 @@ With Bottles fully closed:
 2. confirm **Archivio RetroCD** shows the existing archive automatically on the legacy target installation;
 3. inspect `~/.config/bottles-retro-cd/config.toml` and require `schema_version = 2` plus the correct `archive_root`;
 4. reselect the same archive through **Scegli cartella…**, close RetroCD completely, reopen it and confirm the choice persists;
-5. run **Test Bubblejail** and require PASS for the real temporary non-whitelisted host sentinel;
-6. run **Test CD → Bubblejail** with a known disc and require both temporary host sentinels hidden, `/mnt/cdemu` RO when enabled, and the exact raw optical node only when requested;
-7. launch Bottles once and require GPU pre/post plus Retro Optical pre/post PASS lines;
-8. select XWayland and confirm Bottles still opens; for Discworld Noir confirm direct fullscreen and working audio.
+5. confirm the **Sandbox** tab scrolls vertically and all controls, including Gamepad and **Avvia Bottles**, remain reachable;
+6. with the Xbox controller connected and Bottles closed, run **Test gamepad** and require only the detected `jsX` plus matching `eventX` node(s), all readable, no unrelated `/dev/input` nodes and no `/dev/hidraw*`;
+7. launch Bottles with gamepad ON and require the first monitor result to PASS with `sysfs=exact`, `udev=initial-static` and `hidraw=hidden`;
+8. while Bottles/Wine remains running, disconnect the Xbox controller and require a hotplug PASS with `nodi=nessuno`, `sysfs=exact`, `udev=notified` and `hidraw=hidden`;
+9. reconnect the controller without restarting Bottles and require a new hotplug PASS with exactly the currently detected `jsX/eventX` nodes, `sysfs=exact`, `udev=notified` and `hidraw=hidden`; then confirm Wine/the game can use the controller again where the application itself supports runtime re-enumeration;
+10. run **Test Bubblejail** and require PASS for the real temporary non-whitelisted host sentinel;
+11. run **Test CD → Bubblejail** with a known disc and require both temporary host sentinels hidden, `/mnt/cdemu` RO when enabled, and the exact raw optical node only when requested;
+12. launch Bottles once and require GPU pre/post plus Retro Optical pre/post PASS lines;
+13. select XWayland and confirm Bottles still opens; for Discworld Noir confirm direct fullscreen and working audio.
 
 Changing or migrating the archive root must not alter dump contents, names, paths or mtimes.
+
+## Gamepad / hotplug behavior
+
+Gamepad support is managed through Bubblejail's existing `[joystick]` service. RetroCD does **not** bind all of `/dev/input` and 0.4.0 does not expose `/dev/hidraw*` for the standard controller path.
+
+The pre-launch **Test gamepad** is fail-closed: the jail must show exactly the host-detected joystick node plus its matching evdev node(s). The already validated Xbox One S path was `js0` + `event24`, both readable/writable, but node numbers are not contractual and may change after disconnect/reconnect.
+
+After Bottles launch, the RetroCD hotplug monitor polls only supported controller identity. On initial activation it overlays/records the already-present Bubblejail joystick surface without sending a synthetic udev event, so the expected marker is:
+
+```text
+udev=initial-static
+```
+
+On a real add/remove/reconnect event, the helper enters the already-running Bubblejail user/mount/PID/network namespaces, rebuilds only the exact gamepad nodes and matching minimal sysfs subtree, and emits matching libudev notifications for Wine/winebus. The expected marker is:
+
+```text
+udev=notified
+```
+
+Every successful result must also report `sysfs=exact` and `hidraw=hidden`. Any namespace, sysfs, notification or post-change isolation failure must produce `[FAIL] Gamepad hotplug`; do not work around it by broadening `/dev/input` or adding hidraw access.
+
+Switch/gyro controllers that require hidraw are out of scope for 0.4.0.
 
 ## Archive root behavior
 
@@ -166,4 +193,4 @@ Runner persistence has already passed on the target system. To repeat:
 
 ## Security boundary
 
-Bubblejail protects Bottles/Wine. The GTK controller, verifier, CDEmu daemon and libMirage are host-side and run with the logged-in user's permissions, so all host-side archive/DAT parsing treats inputs as untrusted data.
+Bubblejail protects Bottles/Wine. The GTK controller, gamepad hotplug helper, verifier, CDEmu daemon and libMirage are host-side and run with the logged-in user's permissions, so all host-side archive/DAT parsing treats inputs as untrusted data. The hotplug helper is limited to the namespaces of the active `Bottles` instance and validated gamepad device/sysfs references; it does not add a persistent broad device share.
