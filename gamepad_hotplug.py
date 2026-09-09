@@ -5,7 +5,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -117,7 +116,7 @@ def validate_exact_probe(expected: set[str], probe) -> tuple[str, ...]:
     )
 
 
-def reconcile_gamepads(instance: str = INSTANCE) -> HotplugResult:
+def reconcile_gamepads(instance: str = INSTANCE, *, replace_existing: bool = True) -> HotplugResult:
     sandbox = SandboxBackend(instance)
     if not sandbox.running():
         raise RuntimeError("Bubblejail non è attiva; impossibile riconciliare il gamepad.")
@@ -133,29 +132,39 @@ def reconcile_gamepads(instance: str = INSTANCE) -> HotplugResult:
             + ", ".join(before.hidraw_nodes)
         )
 
-    # Rebuild the complete input surface every time. This deliberately removes
-    # Bubblejail's original static gamepad mounts and replaces them only with
-    # the currently detected jsX + matching eventX character devices.
-    if current or expected:
-        if not NS_HELPER.is_file():
-            raise RuntimeError(f"Helper hotplug mancante: {NS_HELPER}")
-        command = [sys.executable, str(NS_HELPER), "--instance", instance]
+    if not replace_existing and current != expected:
+        raise RuntimeError(
+            "Attivazione hotplug iniziale rifiutata: la superficie statica non coincide con i gamepad host "
+            f"(jail={sorted(current)}, host={sorted(expected)})."
+        )
+
+    if not NS_HELPER.is_file():
+        raise RuntimeError(f"Helper hotplug mancante: {NS_HELPER}")
+
+    # First activation is non-destructive: overlay the exact host nodes on the
+    # already validated static Bubblejail surface. Only after that succeeds do
+    # later add/remove/reconnect events rebuild the current node set.
+    command = [sys.executable, str(NS_HELPER), "--instance", instance]
+    if replace_existing:
         for name in sorted(current, key=_node_sort_key):
             command += ["--remove", name]
-        for name in sorted(expected, key=_node_sort_key):
-            command += ["--bind", expected_map[name]]
-        proc = subprocess.run(
-            command,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=12,
-            check=False,
+    for name in sorted(expected, key=_node_sort_key):
+        command += ["--bind", expected_map[name]]
+
+    # Even an empty controller set invokes the helper: entering the exact
+    # namespace and creating /dev/input makes a later first plug possible.
+    proc = subprocess.run(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=12,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Helper mount-namespace gamepad fallito (rc={proc.returncode}).\n{proc.stdout[-3000:]}"
         )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Helper mount-namespace gamepad fallito (rc={proc.returncode}).\n{proc.stdout[-3000:]}"
-            )
 
     after = attached_probe(instance)
     writable = validate_exact_probe(expected, after)
@@ -202,6 +211,7 @@ class GamepadHotplugMonitor:
     def _loop(self) -> None:
         sandbox = SandboxBackend(self.instance)
         previous: tuple[tuple[str, int, int], ...] | None = None
+        activated = False
         first = True
         while not self._stop.is_set():
             if not sandbox.running():
@@ -211,15 +221,18 @@ class GamepadHotplugMonitor:
                 fingerprint = host_fingerprint(devices)
                 if first or fingerprint != previous:
                     reason = "iniziale" if first else "evento add/remove/reconnect"
-                    result = reconcile_gamepads(self.instance)
+                    result = reconcile_gamepads(
+                        self.instance,
+                        replace_existing=activated,
+                    )
                     self._report(result.format(reason), False)
                     previous = host_fingerprint()
+                    activated = True
                     first = False
             except Exception as exc:
                 self._report(f"[FAIL] Gamepad hotplug: {exc}", True)
-                # Do not spin on a kernel/capability failure. A real host device
-                # change gets one fresh attempt, while the existing static path
-                # remains no broader than before.
+                # On an initial capability failure no validated static node is
+                # removed. A later physical device change gets another attempt.
                 previous = host_fingerprint()
                 first = False
             self._stop.wait(self.interval)
