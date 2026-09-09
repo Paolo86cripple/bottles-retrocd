@@ -1,23 +1,38 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import getpass
 import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import tomllib
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from settings_backend import config_dir, load_settings, normalize_archive_root
 
-USER = getpass.getuser()
-DATA_ROOT = Path(os.environ.get("BOTTLES_RETRO_CD_DATA_ROOT", f"/run/media/{USER}/Data"))
-RETROPC_ROOT = DATA_ROOT / "Downloads" / "retropc"
-EGLLIBRARY_ROOT = DATA_ROOT / "EGLLibrary"
+
+def configured_archive_root() -> Path:
+    explicit = normalize_archive_root(os.environ.get("BOTTLES_RETRO_CD_ARCHIVE_ROOT", ""))
+    if explicit:
+        return Path(explicit)
+    configured = normalize_archive_root(load_settings().get("archive_root", ""))
+    if configured:
+        return Path(configured)
+    # Deliberately nonexistent placeholder: a new installation must select an
+    # archive explicitly instead of inheriting a machine-specific storage path.
+    return config_dir() / ".archive-not-configured"
+
+
+RETROPC_ROOT = configured_archive_root()
+# Kept as compatibility aliases for the reviewed controller. They now point to
+# the explicit archive boundary rather than a machine-specific removable disk.
+DATA_ROOT = RETROPC_ROOT
+EGLLIBRARY_ROOT = RETROPC_ROOT
 INSTANCE = os.environ.get("BOTTLES_RETRO_CD_INSTANCE", "Bottles")
 
 
@@ -101,14 +116,14 @@ class SandboxBackend:
     def _danger_for_path(self, p: Path, mode: str) -> str | None:
         p = p.resolve(strict=False)
         home = Path.home().resolve(strict=False)
-        data = DATA_ROOT.resolve(strict=False)
+        archive = RETROPC_ROOT.resolve(strict=False)
 
         # Never allow a persistent share broad enough to expose the real HOME
-        # or the whole removable/media tree containing Data.
+        # or the whole RetroCD archive. Optical media is granted dynamically.
         if p == Path("/") or self._is_same_or_parent(p, home):
             return f"{mode}:{p} espone HOME o un suo genitore"
-        if self._is_same_or_parent(p, data):
-            return f"{mode}:{p} è troppo ampio (include Data intero)"
+        if self._is_same_or_parent(p, archive):
+            return f"{mode}:{p} è troppo ampio (include l'archivio RetroCD)"
 
         # Device/system trees should be granted dynamically by the CD launcher,
         # never as a persistent root_share.
@@ -280,23 +295,28 @@ class SandboxBackend:
 
         marker = f".bottles-retro-test-{uuid.uuid4().hex}"
         host_only = f".bottles-retro-host-only-{uuid.uuid4().hex}"
-        data_only = f".bottles-retro-data-only-{uuid.uuid4().hex}"
         host_only_path = Path.home() / host_only
-        data_only_path = DATA_ROOT / data_only
         host_only_path.write_text("host-only\n", encoding="utf-8")
-        data_only_path.mkdir()
+
+        archive_parent = RETROPC_ROOT.parent
+        try:
+            unshared_path = Path(tempfile.mkdtemp(prefix=".bottles-retro-unshared-", dir=archive_parent))
+        except OSError as exc:
+            host_only_path.unlink(missing_ok=True)
+            results.append(("FAIL", "sentinel host non condivisa", f"impossibile crearla accanto all'archivio: {exc}"))
+            return results
+        unshared_name = unshared_path.name
 
         q = shlex.quote
         script_lines = [
             "set +e",
             f"marker={q(marker)}",
             f"host_only={q(host_only)}",
-            f"data_only={q(data_only)}",
-            f"data={q(str(DATA_ROOT))}",
+            f"unshared={q(str(unshared_path))}",
             "printf 'T_HOME=%s\\n' \"$HOME\"",
             "touch \"$HOME/$marker\" 2>/dev/null; printf 'T_HOME_TOUCH=%s\\n' \"$?\"",
             "[ -e \"$HOME/$host_only\" ]; printf 'T_HOST_HOME_VISIBLE=%s\\n' \"$?\"",
-            "[ -e \"$data/$data_only\" ]; printf 'T_UNSHARED_DATA_VISIBLE=%s\\n' \"$?\"",
+            "[ -e \"$unshared\" ]; printf 'T_UNSHARED_HOST_VISIBLE=%s\\n' \"$?\"",
             "[ -e \"$HOME/.ssh\" ]; printf 'T_SSH_VISIBLE=%s\\n' \"$?\"",
         ]
 
@@ -340,14 +360,14 @@ class SandboxBackend:
         results.append(("PASS" if isolated else "FAIL", "HOME privato", f"HOME={values.get('T_HOME','?')} host_visible={host_marker.exists()} jail_copy={jail_marker.exists()}"))
         host_hidden = values.get("T_HOST_HOME_VISIBLE") not in (None, "0")
         results.append(("PASS" if host_hidden else "FAIL", "HOME reale non visibile", f"marker host-only rc={values.get('T_HOST_HOME_VISIBLE','?')}"))
-        data_hidden = values.get("T_UNSHARED_DATA_VISIBLE") not in (None, "0")
-        results.append(("PASS" if data_hidden else "FAIL", "Data non-whitelist nascosta", f"marker Data host-only rc={values.get('T_UNSHARED_DATA_VISIBLE','?')}"))
+        unshared_hidden = values.get("T_UNSHARED_HOST_VISIBLE") not in (None, "0")
+        results.append(("PASS" if unshared_hidden else "FAIL", "percorso host non-whitelist nascosto", f"sentinel={unshared_name} rc={values.get('T_UNSHARED_HOST_VISIBLE','?')}"))
 
         try:
             jail_marker.unlink(missing_ok=True)
             host_marker.unlink(missing_ok=True)
             host_only_path.unlink(missing_ok=True)
-            data_only_path.rmdir()
+            unshared_path.rmdir()
         except Exception:
             pass
 
