@@ -30,4 +30,4 @@ if ! command -v udisksctl >/dev/null 2>&1; then
     printf 'Nota: udisksctl non trovato; mount RO UDisks2 e multidisco live non saranno disponibili.\n' >&2
 fi
 
-exec python3 "$HERE/bottles-retro-cd-gui-lifecycle.py" "$@"
+exec python3 "$HERE/bottles-retro-cd-gui-gamepad.py" "$@"
