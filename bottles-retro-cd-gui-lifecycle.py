@@ -112,11 +112,10 @@ class Window(_ext.Window):
 
         note = Gtk.Label(
             label=(
-                "Auto non forza nulla. Wayland nativo abilita i controlli Proton/CachyOS Wayland; "
-                "XWayland disabilita esplicitamente il backend Wayland nativo e lascia il normale percorso "
-                "X11/XWayland già disponibile nella sandbox. La scelta modifica solo l'ambiente del runner: "
-                "rete, filesystem, GPU e Retro Optical restano invariati. I runner che non riconoscono queste "
-                "variabili mantengono il proprio comportamento."
+                "Auto non forza nulla. Wayland nativo abilita i controlli Proton/CachyOS Wayland. "
+                "XWayland lascia la GUI Bottles libera di usare Wayland, ma presenta a Bottles una sessione "
+                "X11 per impedire che il toggle Wayland della bottle riattivi winewayland.drv. "
+                "La scelta non aggiunge socket o permessi: rete, filesystem, GPU e Retro Optical restano invariati."
             ),
             xalign=0,
             wrap=True,
