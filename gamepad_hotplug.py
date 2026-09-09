@@ -27,18 +27,24 @@ class HotplugResult:
     writable_nodes: tuple[str, ...]
 
     def format(self, reason: str) -> str:
-        names = ", ".join(device.name for device in self.devices) if self.devices else "nessun controller"
+        names = (
+            ", ".join(device.name for device in self.devices)
+            if self.devices
+            else "nessun controller"
+        )
         nodes = ", ".join(self.nodes) if self.nodes else "nessuno"
-        writable = ", ".join(self.writable_nodes) if self.writable_nodes else "nessuno"
+        writable = (
+            ", ".join(self.writable_nodes) if self.writable_nodes else "nessuno"
+        )
         return (
             f"[PASS] Gamepad hotplug {reason}: {names} · nodi={nodes} · "
-            f"scrivibili={writable} · hidraw=hidden"
+            f"scrivibili={writable} · sysfs=exact · udev=notified · hidraw=hidden"
         )
 
 
 def _node_sort_key(name: str) -> tuple[str, int]:
     prefix = name.rstrip("0123456789")
-    suffix = name[len(prefix):]
+    suffix = name[len(prefix) :]
     return prefix, int(suffix) if suffix.isdecimal() else -1
 
 
@@ -55,7 +61,9 @@ def device_node_map(devices: tuple[GamepadDevice, ...]) -> dict[str, str]:
     return result
 
 
-def host_fingerprint(devices: tuple[GamepadDevice, ...] | None = None) -> tuple[tuple[str, int, int], ...]:
+def host_fingerprint(
+    devices: tuple[GamepadDevice, ...] | None = None,
+) -> tuple[tuple[str, int, int], ...]:
     devices = detect_host_gamepads() if devices is None else devices
     entries: list[tuple[str, int, int]] = []
     for path in device_node_map(devices).values():
@@ -82,7 +90,8 @@ def attached_probe(instance: str = INSTANCE):
     )
     if proc.returncode != 0:
         raise RuntimeError(
-            f"Probe gamepad sull'istanza attiva fallita (rc={proc.returncode}).\n{proc.stdout[-3000:]}"
+            f"Probe gamepad sull'istanza attiva fallita (rc={proc.returncode}).\n"
+            + proc.stdout[-3000:]
         )
     return parse_gamepad_probe(proc.stdout)
 
@@ -94,7 +103,11 @@ def validate_exact_probe(expected: set[str], probe) -> tuple[str, ...]:
     missing = sorted(expected - actual, key=_node_sort_key)
     unexpected = sorted(actual - expected, key=_node_sort_key)
     unreadable = sorted(
-        (name for name in expected if name in probe.nodes and not probe.nodes[name][0]),
+        (
+            name
+            for name in expected
+            if name in probe.nodes and not probe.nodes[name][0]
+        ),
         key=_node_sort_key,
     )
     failures: list[str] = []
@@ -107,16 +120,26 @@ def validate_exact_probe(expected: set[str], probe) -> tuple[str, ...]:
     if probe.hidraw_nodes:
         failures.append("hidraw=" + ",".join(probe.hidraw_nodes))
     if failures:
-        raise RuntimeError("Gamepad hotplug: isolamento non conforme: " + "; ".join(failures))
+        raise RuntimeError(
+            "Gamepad hotplug: isolamento non conforme: " + "; ".join(failures)
+        )
     return tuple(
         sorted(
-            (name for name in expected if probe.nodes.get(name, (False, False))[1]),
+            (
+                name
+                for name in expected
+                if probe.nodes.get(name, (False, False))[1]
+            ),
             key=_node_sort_key,
         )
     )
 
 
-def reconcile_gamepads(instance: str = INSTANCE, *, replace_existing: bool = True) -> HotplugResult:
+def reconcile_gamepads(
+    instance: str = INSTANCE,
+    *,
+    replace_existing: bool = True,
+) -> HotplugResult:
     sandbox = SandboxBackend(instance)
     if not sandbox.running():
         raise RuntimeError("Bubblejail non è attiva; impossibile riconciliare il gamepad.")
@@ -134,25 +157,31 @@ def reconcile_gamepads(instance: str = INSTANCE, *, replace_existing: bool = Tru
 
     if not replace_existing and current != expected:
         raise RuntimeError(
-            "Attivazione hotplug iniziale rifiutata: la superficie statica non coincide con i gamepad host "
+            "Attivazione hotplug iniziale rifiutata: la superficie statica non coincide "
+            "con i gamepad host "
             f"(jail={sorted(current)}, host={sorted(expected)})."
         )
 
     if not NS_HELPER.is_file():
         raise RuntimeError(f"Helper hotplug mancante: {NS_HELPER}")
 
-    # First activation is non-destructive: overlay the exact host nodes on the
-    # already validated static Bubblejail surface. Only after that succeeds do
-    # later add/remove/reconnect events rebuild the current node set.
+    # First activation is deliberately non-destructive: it overlays the exact
+    # already-validated static Bubblejail nodes and records the minimal sysfs
+    # metadata needed for later disconnect/reconnect. On subsequent physical
+    # changes we rebuild the exact surface, and the helper also emits matching
+    # udev remove/add notifications in Bubblejail's network namespace so
+    # Wine/winebus can observe the change rather than merely seeing new files.
     command = [sys.executable, str(NS_HELPER), "--instance", instance]
     if replace_existing:
+        command.append("--notify")
         for name in sorted(current, key=_node_sort_key):
             command += ["--remove", name]
     for name in sorted(expected, key=_node_sort_key):
         command += ["--bind", expected_map[name]]
 
-    # Even an empty controller set invokes the helper: entering the exact
-    # namespace and creating /dev/input makes a later first plug possible.
+    # Even an empty controller set invokes the helper. This proves namespace
+    # entry and creates the private state directory so a first plug after
+    # Bottles startup can be handled without exposing a broad host directory.
     proc = subprocess.run(
         command,
         text=True,
@@ -163,7 +192,8 @@ def reconcile_gamepads(instance: str = INSTANCE, *, replace_existing: bool = Tru
     )
     if proc.returncode != 0:
         raise RuntimeError(
-            f"Helper mount-namespace gamepad fallito (rc={proc.returncode}).\n{proc.stdout[-3000:]}"
+            f"Helper namespace gamepad fallito (rc={proc.returncode}).\n"
+            + proc.stdout[-3000:]
         )
 
     after = attached_probe(instance)
@@ -231,8 +261,10 @@ class GamepadHotplugMonitor:
                     first = False
             except Exception as exc:
                 self._report(f"[FAIL] Gamepad hotplug: {exc}", True)
-                # On an initial capability failure no validated static node is
-                # removed. A later physical device change gets another attempt.
+                # A failed initial capability probe leaves Bubblejail's known-good
+                # static joystick surface untouched. We do not switch to a
+                # destructive mode unless exact-node namespace activation has
+                # succeeded at least once.
                 previous = host_fingerprint()
                 first = False
             self._stop.wait(self.interval)
