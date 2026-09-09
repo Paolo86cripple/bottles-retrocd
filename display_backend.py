@@ -27,13 +27,7 @@ def normalize_display_backend(value: object) -> str:
 
 
 def proton_wayland_environment(backend: object) -> dict[str, str]:
-    """Return environment values that must be set for the selected backend.
-
-    Auto deliberately returns no overrides. Native Wayland explicitly enables
-    the two Proton-CachyOS aliases. XWayland is represented by no set values;
-    ``bubblewrap_display_args`` removes both aliases from the launch environment
-    so an inherited Wayland opt-in cannot accidentally remain active.
-    """
+    """Return environment values that must be set for native Proton Wayland."""
     selected = normalize_display_backend(backend)
     if selected != DISPLAY_WAYLAND:
         return {}
@@ -41,14 +35,23 @@ def proton_wayland_environment(backend: object) -> dict[str, str]:
 
 
 def bubblewrap_display_args(backend: object) -> list[str]:
-    """Encode the display policy as per-launch Bubblewrap environment arguments."""
+    """Encode the display policy as per-launch Bubblewrap environment arguments.
+
+    XWayland removes both Proton Wayland opt-ins and ``WAYLAND_DISPLAY`` and
+    forces GTK/Bottles itself onto its X11 backend. This is intentional: Bottles
+    has a per-bottle experimental Wayland flag which can otherwise request
+    native Wayland again after RetroCD starts it. No display socket or other
+    sandbox permission is added here; the existing XWayland path must already
+    be available in the Bubblejail profile.
+    """
     selected = normalize_display_backend(backend)
     if selected == DISPLAY_AUTO:
         return []
     if selected == DISPLAY_XWAYLAND:
         args: list[str] = []
-        for name in PROTON_WAYLAND_VARIABLES:
+        for name in (*PROTON_WAYLAND_VARIABLES, "WAYLAND_DISPLAY"):
             args.extend(["--debug-bwrap-args", "unsetenv", name])
+        args.extend(["--debug-bwrap-args", "setenv", "GDK_BACKEND", "x11"])
         return args
 
     args = []
