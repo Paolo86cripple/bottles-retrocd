@@ -10,6 +10,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import sandbox_backend as sandbox_module  # noqa: E402
 from sandbox_backend import SandboxBackend  # noqa: E402
 
 
@@ -51,6 +52,16 @@ class SandboxBackendTests(unittest.TestCase):
         with patch.object(self.backend, "running", return_value=False):
             with self.assertRaises(RuntimeError):
                 self.backend.set_whitelist(["/"], [])
+
+    def test_rejects_archive_root_and_parent(self):
+        archive = Path(self.tmp.name) / "archive-parent" / "retropc"
+        archive.mkdir(parents=True)
+        with patch.object(sandbox_module, "RETROPC_ROOT", archive):
+            with patch.object(self.backend, "running", return_value=False):
+                with self.assertRaises(RuntimeError):
+                    self.backend.set_whitelist([str(archive)], [])
+                with self.assertRaises(RuntimeError):
+                    self.backend.set_whitelist([str(archive.parent)], [])
 
     def test_rejects_nested_binds(self):
         child = self.rw / "child"
