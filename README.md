@@ -93,6 +93,11 @@ The current branch CI passes **73 unit tests**: 19 original sandbox/settings/mul
 
 The rc2 validates raw `/dev/srX` by CDEmu mapping, Linux block-device identity and SCSI optical type 5. The block-layer `ro` bit is diagnostic only; UDisks2 filesystem mounts remain fail-closed read-only.
 
+## Post-release roadmap
+
+1. **DxWrapper / Legacy DirectX compatibility layer** — evaluate and integrate DxWrapper as an optional, **OFF-by-default** compatibility backend for legacy Windows games, especially DirectDraw/Direct3D 1–7 through `Dd7to9` and D3D8→D3D9. It should be selectable per profile, work with either DXVK or WineD3D where appropriate, and must not weaken the existing Bubblejail sandbox or device/filesystem isolation.
+2. **libRashader + Slang shaders** — optional, **OFF-by-default** shader integration for Windows/Bottles games, after the legacy DirectX compatibility layer is stable.
+
 ## Run locally
 
 Nothing is installed by this tree:
