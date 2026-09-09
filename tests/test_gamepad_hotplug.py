@@ -89,6 +89,8 @@ class GamepadHotplugTests(unittest.TestCase):
         ):
             result = hotplug.reconcile_gamepads("Bottles")
         self.assertEqual(("event24", "js0"), result.nodes)
+        self.assertTrue(result.udev_notified)
+        self.assertIn("udev=notified", result.format("evento add/remove/reconnect"))
         args = run.call_args.args[0]
         self.assertIn("--notify", args)
         self.assertIn("--remove", args)
@@ -118,7 +120,9 @@ class GamepadHotplugTests(unittest.TestCase):
             mock.patch.object(hotplug.Path, "is_file", return_value=True),
             mock.patch.object(hotplug.subprocess, "run", return_value=proc) as run,
         ):
-            hotplug.reconcile_gamepads("Bottles", replace_existing=False)
+            result = hotplug.reconcile_gamepads("Bottles", replace_existing=False)
+        self.assertFalse(result.udev_notified)
+        self.assertIn("udev=initial-static", result.format("iniziale"))
         args = run.call_args.args[0]
         self.assertNotIn("--notify", args)
         self.assertNotIn("--remove", args)
