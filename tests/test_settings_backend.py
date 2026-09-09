@@ -33,18 +33,33 @@ class SettingsBackendTests(unittest.TestCase):
             self.assertEqual(0o700, stat.S_IMODE(path.parent.stat().st_mode))
 
     def test_invalid_config_falls_back_safely(self):
-        with tempfile.TemporaryDirectory() as td, mock.patch.dict(
-            os.environ,
-            {"XDG_CONFIG_HOME": td, "BOTTLES_RETRO_CD_ARCHIVE_ROOT": "", "BOTTLES_RETRO_CD_DATA_ROOT": ""},
-            clear=False,
-        ):
-            path = Path(td) / "bottles-retro-cd" / "config.toml"
-            path.parent.mkdir(parents=True)
-            path.write_text("not valid = [", encoding="utf-8")
-            loaded = load_settings()
-            self.assertEqual("", loaded["gpu_pci"])
-            self.assertEqual("auto", loaded["display_backend"])
-            self.assertEqual("", loaded["archive_root"])
+        for legacy_exists in (False, True):
+            with self.subTest(legacy_exists=legacy_exists), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                data_root = root / "Data"
+                archive = data_root / "Downloads" / "retropc"
+                if legacy_exists:
+                    archive.mkdir(parents=True)
+                with mock.patch.dict(
+                    os.environ,
+                    {
+                        "XDG_CONFIG_HOME": str(root / "config"),
+                        "BOTTLES_RETRO_CD_ARCHIVE_ROOT": "",
+                        "BOTTLES_RETRO_CD_DATA_ROOT": str(data_root),
+                    },
+                    clear=False,
+                ):
+                    path = root / "config" / "bottles-retro-cd" / "config.toml"
+                    path.parent.mkdir(parents=True)
+                    path.write_text("not valid = [", encoding="utf-8")
+                    before = path.read_bytes()
+                    loaded = load_settings()
+                    self.assertEqual("", loaded["gpu_pci"])
+                    self.assertEqual("auto", loaded["display_backend"])
+                    expected = str(archive.resolve()) if legacy_exists else ""
+                    self.assertEqual(expected, loaded["archive_root"])
+                    self.assertEqual(expected, migrate_legacy_archive_root())
+                    self.assertEqual(before, path.read_bytes())
 
     def test_unknown_display_backend_is_normalized_to_auto(self):
         with tempfile.TemporaryDirectory() as td, mock.patch.dict(
