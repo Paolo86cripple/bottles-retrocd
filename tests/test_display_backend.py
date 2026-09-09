@@ -35,13 +35,14 @@ class DisplayBackendTests(unittest.TestCase):
         for forbidden in ("share-net", "ro-bind", "dev-bind", "/dev/dri", "/dev/sr", "/dev/sg"):
             self.assertNotIn(forbidden, joined)
 
-    def test_xwayland_disables_native_proton_wayland(self):
+    def test_xwayland_removes_native_proton_wayland_opt_in(self):
+        self.assertEqual({}, proton_wayland_environment("xwayland"))
         self.assertEqual(
-            {
-                "PROTON_ENABLE_WAYLAND": "0",
-                "PROTON_USE_WAYLAND": "0",
-            },
-            proton_wayland_environment("xwayland"),
+            [
+                "--debug-bwrap-args", "unsetenv", "PROTON_ENABLE_WAYLAND",
+                "--debug-bwrap-args", "unsetenv", "PROTON_USE_WAYLAND",
+            ],
+            bubblewrap_display_args("xwayland"),
         )
 
     def test_unknown_value_fails_safely_to_auto(self):
