@@ -2,11 +2,41 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import sandbox_backend as _sandbox_runtime
+from settings_backend import (
+    config_dir,
+    load_settings,
+    migrate_legacy_archive_root,
+    normalize_archive_root,
+    save_settings,
+)
+
+
+def _initial_archive_root() -> Path:
+    migrated = migrate_legacy_archive_root()
+    configured = normalize_archive_root(migrated or load_settings().get("archive_root", ""))
+    if configured:
+        return Path(configured)
+    return config_dir() / ".archive-not-configured"
+
+
+def _set_sandbox_archive_globals(root: Path) -> None:
+    root = root.expanduser().resolve(strict=False)
+    _sandbox_runtime.DATA_ROOT = root
+    _sandbox_runtime.RETROPC_ROOT = root
+    _sandbox_runtime.EGLLIBRARY_ROOT = root
+
+
+_INITIAL_ARCHIVE_ROOT = _initial_archive_root()
+_set_sandbox_archive_globals(_INITIAL_ARCHIVE_ROOT)
 
 EXTENDED_GUI = Path(__file__).with_name("bottles-retro-cd-gui.py")
 _spec = importlib.util.spec_from_file_location("_bottles_retro_cd_extended", EXTENDED_GUI)
@@ -17,6 +47,26 @@ _spec.loader.exec_module(_ext)
 
 Gtk = _ext.Gtk
 GLib = _ext.GLib
+Gio = _ext.Gio
+
+
+def _apply_archive_root(root: Path) -> Path:
+    root = root.expanduser().resolve(strict=False)
+    _set_sandbox_archive_globals(root)
+    # The reviewed controller copies these module globals at import time. Keep
+    # those references aligned when the user changes archive without restarting.
+    _ext._base.DATA_ROOT = root
+    _ext._base.RETROPC_ROOT = root
+    _ext._base.EGLLIBRARY_ROOT = root
+    _ext.RETROPC_ROOT = root
+    return root
+
+
+_apply_archive_root(_INITIAL_ARCHIVE_ROOT)
+# Stable metadata for the first public release. Setting these before App/Window
+# construction avoids rewriting the preserved reviewed base controller.
+_ext._base.APP_ID = "io.github.Paolo86cripple.BottlesRetroCD"
+_ext._base.VERSION = "0.4.0"
 
 from cdemu_lifecycle import (  # noqa: E402
     LifecycleReport,
@@ -39,9 +89,9 @@ from retro_optical import (  # noqa: E402
 )
 
 UPDATE_HELPER = Path(__file__).with_name("cdemu_update_cli.py")
-# Keep a stable reference to the original rc2 controller. The extended module
-# replaces its module-level Window symbol after defining its subclass, but the
-# real base class remains the second entry in the Python MRO.
+# Keep a stable reference to the original reviewed controller. The extended
+# module replaces its module-level Window symbol after defining its subclass,
+# but the real base class remains the second entry in the Python MRO.
 BASE_CONTROLLER = _ext.Window.__mro__[1]
 
 
@@ -70,24 +120,124 @@ class _SubprocessProxy:
 
 
 class Window(_ext.Window):
-    """Final Point-5 GUI extension for lifecycle and reviewed launch hardening."""
+    """Final release GUI extension for lifecycle and reviewed launch hardening."""
 
     def __init__(self, app):
         super().__init__(app)
         self._last_lifecycle_report: LifecycleReport | None = None
         self._prepared_update_command: tuple[str, ...] = ()
         self._last_optical_preflight = ""
+        self._archive_root = _apply_archive_root(
+            Path(normalize_archive_root(self.settings.get("archive_root", "")))
+            if normalize_archive_root(self.settings.get("archive_root", ""))
+            else _INITIAL_ARCHIVE_ROOT
+        )
         self._last_display_backend = normalize_display_backend(
             self.settings.get("display_backend", DISPLAY_AUTO)
         )
+        self._install_archive_root_selector()
         self._install_display_backend_selector()
         self.build_lifecycle_tab()
 
     # ------------------------------------------------------------------
-    # Per-launch display backend selection.
+    # Persistent archive boundary.
+    # ------------------------------------------------------------------
+    def _archive_configured(self) -> bool:
+        return bool(normalize_archive_root(self.settings.get("archive_root", "")))
+
+    def _archive_label_text(self) -> str:
+        if not self._archive_configured():
+            return "Archivio: non configurato"
+        return f"Archivio: {self._archive_root}"
+
+    def _install_archive_root_selector(self):
+        frame = Gtk.Frame(label="Archivio RetroCD")
+        box = self.frame_box(frame)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box.append(row)
+        self.archive_root_label = Gtk.Label(
+            label=self._archive_label_text(),
+            xalign=0,
+            wrap=True,
+            selectable=True,
+            hexpand=True,
+        )
+        row.append(self.archive_root_label)
+        self.archive_root_btn = Gtk.Button(label="Scegli cartella…")
+        self.archive_root_btn.connect("clicked", self._choose_archive_root)
+        row.append(self.archive_root_btn)
+
+        note = Gtk.Label(
+            label=(
+                "Radice dei dump Windows PC usati da CDEmu, set multidisco e verifica. "
+                "RetroCD salva solo il percorso: non sposta, rinomina o riscrive i dump. "
+                "L'archivio non viene esposto persistentemente alla jail; il supporto attivo resta concesso dinamicamente e RO."
+            ),
+            xalign=0,
+            wrap=True,
+        )
+        note.add_css_class("dim-label")
+        box.append(note)
+
+        parent = self.launch_btn.get_parent()
+        previous = self.launch_btn.get_prev_sibling()
+        if isinstance(parent, Gtk.Box) and previous is not None:
+            parent.insert_child_after(frame, previous)
+        else:
+            raise RuntimeError("Layout Sandbox inatteso: impossibile inserire l'archivio RetroCD.")
+
+    def _choose_archive_root(self, *_):
+        if self.sandbox.running():
+            self.set_message("Chiudi Bottles/Bubblejail prima di cambiare archivio RetroCD.", True)
+            return
+        if self.active_bridge_cache or self._live_cleanup_running:
+            self.set_message("Termina prima la sessione multidisco e la relativa pulizia cache.", True)
+            return
+
+        dialog = Gtk.FileChooserNative.new(
+            "Scegli la radice dell'archivio RetroCD",
+            self,
+            Gtk.FileChooserAction.SELECT_FOLDER,
+            "_Seleziona",
+            "_Annulla",
+        )
+        if self._archive_root.is_dir():
+            dialog.set_current_folder(Gio.File.new_for_path(str(self._archive_root)))
+
+        def response(dlg, response_id):
+            try:
+                if response_id != Gtk.ResponseType.ACCEPT:
+                    return
+                chosen = dlg.get_file()
+                raw_path = chosen.get_path() if chosen is not None else None
+                if not raw_path:
+                    raise RuntimeError("Nessuna directory archivio selezionata.")
+                root = Path(raw_path).resolve(strict=True)
+                if not root.is_dir():
+                    raise RuntimeError(f"Archivio non valido: {root}")
+
+                self.settings["archive_root"] = str(root)
+                save_settings(self.settings)
+                self._archive_root = _apply_archive_root(root)
+                self.archive_root_label.set_text(self._archive_label_text())
+                self.reload_saved_disc_sets()
+                self.refresh_images()
+                self.reload_whitelist()
+                self.set_message(f"Archivio RetroCD impostato: {root}. Nessun dump è stato modificato.")
+            except Exception as exc:
+                self.set_message(f"Impossibile impostare l'archivio RetroCD: {exc}", True)
+            finally:
+                dlg.destroy()
+
+        dialog.connect("response", response)
+        dialog.show()
+
+    # ------------------------------------------------------------------
+    # Persistent display backend selection.
     # ------------------------------------------------------------------
     def _install_display_backend_selector(self):
-        frame = Gtk.Frame(label="Backend display per questo avvio")
+        frame = Gtk.Frame(label="Backend display predefinito")
         box = self.frame_box(frame)
 
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -112,7 +262,7 @@ class Window(_ext.Window):
 
         note = Gtk.Label(
             label=(
-                "Auto non forza nulla. Wayland nativo abilita i controlli Proton/CachyOS Wayland. "
+                "La scelta viene salvata. Auto non forza nulla. Wayland nativo abilita i controlli Proton/CachyOS Wayland. "
                 "XWayland lascia la GUI Bottles libera di usare Wayland, ma presenta a Bottles una sessione "
                 "X11 per impedire che il toggle Wayland della bottle riattivi winewayland.drv. "
                 "La scelta non aggiunge socket o permessi: rete, filesystem, GPU e Retro Optical restano invariati."
@@ -143,7 +293,7 @@ class Window(_ext.Window):
         self.settings["display_backend"] = backend
         self._last_display_backend = backend
         try:
-            _ext._base.save_settings(self.settings)
+            save_settings(self.settings)
         except Exception as exc:
             self.set_message(f"Impossibile salvare il backend display: {exc}", True)
 
@@ -224,6 +374,8 @@ class Window(_ext.Window):
 
     def launch_bottles(self):
         """Final fail-closed launch: GPU preflight, optical preflight, then postflight."""
+        if not self._archive_configured():
+            raise RuntimeError("Configura prima la radice dell'archivio RetroCD.")
         # Runs in the worker created by background(); GTK writes go through GLib.
         gpu = self.selected_gpu()
         gpu_preflight = self._probe_gpu_isolation(gpu, attached=False)
@@ -240,9 +392,9 @@ class Window(_ext.Window):
         _ext._base.subprocess = _SubprocessProxy(real_subprocess, captured)
         try:
             # Deliberately bypass the intermediate extension's legacy Popen
-            # tracker. All normal rc2 CD/network/multidisc setup still runs via
-            # the original controller and dispatches runtime_bubblejail_args()
-            # back to this final class for the exact optical preflight.
+            # tracker. All normal CD/network/multidisc setup still runs via the
+            # reviewed controller and dispatches runtime_bubblejail_args() back
+            # to this final class for the exact optical preflight.
             result = BASE_CONTROLLER.launch_bottles(self)
         finally:
             _ext._base.subprocess = real_subprocess
@@ -286,6 +438,29 @@ class Window(_ext.Window):
             str(result)
             + f" · display {display_label}"
             + " · isolamento GPU pre/post e Retro Optical pre/post verificato"
+        )
+
+    def run_integration_test(self):
+        """Run the reviewed CD→jail test against real temporary host sentinels."""
+        if not self._archive_configured():
+            raise RuntimeError("Configura prima la radice dell'archivio RetroCD.")
+        parent = self._archive_root.parent
+        try:
+            sentinel_root = Path(tempfile.mkdtemp(prefix=".retrocd-integration-", dir=parent))
+        except OSError as exc:
+            raise RuntimeError(f"Impossibile creare la sentinel host accanto all'archivio: {exc}") from exc
+        (sentinel_root / "progetti").mkdir()
+        (sentinel_root / "SteamLibrary").mkdir()
+        original_data_root = _ext._base.DATA_ROOT
+        _ext._base.DATA_ROOT = sentinel_root
+        try:
+            result = BASE_CONTROLLER.run_integration_test(self)
+        finally:
+            _ext._base.DATA_ROOT = original_data_root
+            shutil.rmtree(sentinel_root, ignore_errors=True)
+        return (
+            result.replace("Data/progetti nascosta", "sentinel host non-whitelist A nascosta")
+            .replace("Data/SteamLibrary nascosta", "sentinel host non-whitelist B nascosta")
         )
 
     # ------------------------------------------------------------------
@@ -523,11 +698,14 @@ class Window(_ext.Window):
 
     def set_busy(self, busy: bool):
         super().set_busy(busy)
+        archive = getattr(self, "archive_root_btn", None)
         display = getattr(self, "display_backend_drop", None)
         check = getattr(self, "lifecycle_check_btn", None)
         prepare = getattr(self, "lifecycle_prepare_btn", None)
         copy = getattr(self, "lifecycle_copy_btn", None)
         launch = getattr(self, "lifecycle_launch_update_btn", None)
+        if archive is not None:
+            archive.set_sensitive(not busy)
         if display is not None:
             display.set_sensitive(not busy)
         if check is not None:
