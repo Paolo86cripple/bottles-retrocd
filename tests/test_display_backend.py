@@ -35,19 +35,20 @@ class DisplayBackendTests(unittest.TestCase):
         for forbidden in ("share-net", "ro-bind", "dev-bind", "/dev/dri", "/dev/sr", "/dev/sg"):
             self.assertNotIn(forbidden, joined)
 
-    def test_xwayland_forces_bottles_x11_without_adding_permissions(self):
+    def test_xwayland_disables_wine_wayland_without_breaking_bottles_gui(self):
         self.assertEqual({}, proton_wayland_environment("xwayland"))
         args = bubblewrap_display_args("xwayland")
         self.assertEqual(
             [
                 "--debug-bwrap-args", "unsetenv", "PROTON_ENABLE_WAYLAND",
                 "--debug-bwrap-args", "unsetenv", "PROTON_USE_WAYLAND",
-                "--debug-bwrap-args", "unsetenv", "WAYLAND_DISPLAY",
-                "--debug-bwrap-args", "setenv", "GDK_BACKEND", "x11",
+                "--debug-bwrap-args", "setenv", "XDG_SESSION_TYPE", "x11",
             ],
             args,
         )
         joined = " ".join(args)
+        self.assertNotIn("WAYLAND_DISPLAY", joined)
+        self.assertNotIn("GDK_BACKEND", joined)
         for forbidden in ("share-net", "ro-bind", "dev-bind", "/dev/dri", "/dev/sr", "/dev/sg"):
             self.assertNotIn(forbidden, joined)
 
