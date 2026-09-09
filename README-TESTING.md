@@ -1,8 +1,8 @@
-# Testing 0.4.0-rc2 + verifier candidate
+# Testing Bottles RetroCD 0.4.0
 
-This tree is intended to be run locally before packaging. Nothing here installs files under `/usr`.
+This tree is the pre-packaging 0.4.0 candidate. Running it locally does not install files under `/usr`.
 
-Start the GTK application with:
+Start with:
 
 ```sh
 ./run-local.sh
@@ -12,125 +12,158 @@ The existing Bubblejail instance `Bottles` is reused; no second persistent insta
 
 ## Automated regression suite
 
-Run:
-
 ```sh
 PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests -v
 bash -n run-local.sh
 ```
 
-The current branch suite contains **73 tests**:
+Current expected count: **130 tests PASS**.
 
-- 19 original sandbox/settings/multidisc/bridge tests;
-- 8 additional GPU fail-closed validation tests;
-- 35 Redump/TOSEC verifier, Logiqx index, hash-cache and updater tests;
-- 12 read-only protection-scanner tests.
+CI also:
 
-The GPU tests cover rejection of an implicit default GPU, malformed stable identity, positive proof of the selected nodes, rejection of visible non-selected DRM nodes, Vulkan vendor/device mismatch, multiple Vulkan devices, missing proof markers, the distinction between pre-launch environment proof and post-launch effective-sandbox proof, and the Bubblejail 0.10.4 rule that a running-instance probe must use `--wait` plus a positional command rather than `--debug-shell`.
+- compiles every application module, including `display_backend.py`;
+- promotes `ResourceWarning` to an error;
+- checks `run-local.sh` syntax;
+- rejects `os.system`, `shell=True`, `eval` and dynamic `exec` in Python paths.
 
-The verifier tests include path-escape rejection, Windows absolute CUE rejection, streaming hash/cache invalidation, exact/partial/ambiguous DAT matches, ZIP traversal and ZIP symlink rejection, official-host HTTPS policy, local DAT immutability, corrupt-update rollback and injected `os.replace()` failure rollback.
+## Final pre-packaging target-machine gate
 
-The scanner tests include cooked/raw/Joliet parsing, signature detection, DAT↔scanner comparison and fail-closed rejection of an oversized ISO directory extent.
-
-## Mandatory GPU/Bubblejail real-machine validation
-
-The final launch guard is security-sensitive and must be tested on the target CachyOS machine after pulling the candidate.
+The GPU/optical/display paths have already passed target-machine validation. The remaining review-specific gate is the new portable archive-root migration/selector and real-sentinel isolation check.
 
 With Bottles fully closed:
 
-1. Select the **Ryzen 7 9800X3D integrated GPU**.
-2. Press **Test Vulkan** and require a PASS.
-3. Launch Bottles. The cumulative log must contain both a `GPU pre-avvio` PASS and a `GPU post-avvio` PASS before the launch is considered successful.
-4. Close Bottles completely.
-5. Repeat with the **Radeon RX 9070 XT**.
+1. pull and run `review/pre-packaging-cleanup`;
+2. confirm **Archivio RetroCD** shows the existing archive automatically on the legacy target installation;
+3. inspect `~/.config/bottles-retro-cd/config.toml` and require `schema_version = 2` plus the correct `archive_root`;
+4. reselect the same archive through **Scegli cartella…**, close RetroCD completely, reopen it and confirm the choice persists;
+5. run **Test Bubblejail** and require PASS for the real temporary non-whitelisted host sentinel;
+6. run **Test CD → Bubblejail** with a known disc and require both temporary host sentinels hidden, `/mnt/cdemu` RO when enabled, and the exact raw optical node only when requested;
+7. launch Bottles once and require GPU pre/post plus Retro Optical pre/post PASS lines;
+8. select XWayland and confirm Bottles still opens; for Discworld Noir confirm direct fullscreen and working audio.
 
-Expected policy:
+Changing or migrating the archive root must not alter dump contents, names, paths or mtimes.
 
-- no GPU / invalid GPU metadata / missing DRM character device -> launch refused;
-- missing `--debug-bwrap-args` support -> launch refused;
-- selected DRM node missing in the jail -> launch refused;
-- any known DRM node from the non-selected GPU visible -> launch refused;
-- `DRI_PRIME` not positively confirmed by the **pre-launch** probe -> launch refused;
-- the **post-launch** probe is injected into the already-running instance through Bubblejail's helper path (`bubblejail run --wait Bottles /bin/sh -c <probe>`); it does not depend on the injected process's `DRI_PRIME` value, but must still positively prove selected-node presence, non-selected-node absence, exactly one Vulkan GPU and matching vendor/device identity;
-- zero or more than one Vulkan GPU -> launch refused;
-- vendor/device mismatch -> launch refused;
-- post-launch helper injection/output failure or effective-isolation proof failure -> the exact Bubblejail launch process group is terminated and the GUI reports failure.
+## Archive root behavior
 
-The earlier `--debug-shell` post-launch implementation was incorrect on Bubblejail 0.10.4 because an already-running instance is handled through helper RPC before the debug-shell launch path. A missing-marker result from that implementation is a probe-transport false negative and should be retested with this fix.
+Configuration schema 2 persists:
 
-## Existing runtime validation
+- `gpu_pci`;
+- `display_backend`;
+- `archive_root`.
 
-Run the tests in the **Test** tab with Bottles fully closed:
+On the existing target machine, the previous `/run/media/<user>/Data/Downloads/retropc` directory is migrated only if it exists. Migration stores the path; it does not move data.
 
-1. **CDEmu + UDisks2** — temporary device creation, D-Bus load/unload, advanced CDEmu options, optical-device identity, UDisks2 RO mount and denied write, followed by cleanup.
-2. **Bubblejail** — private HOME, dynamic RO/RW whitelist, hidden unshared Data, network isolation, Wayland/XWayland, audio, GPU/Vulkan and dconf.
-3. **CD → Bubblejail** — temporary CDEmu device plus `/mnt/cdemu` RO inside the jail, raw `/dev/srX` as an explicit compatibility path, while unrelated Data paths stay hidden.
-4. **Bridge/cache multidisc** — static bridge target switching and cached RO mount lifecycle.
+A new installation has no machine-specific archive default and must select one explicitly.
 
-The Test tab is a cumulative application log. It records normal operations such as load/eject, Bottles launch, GPU pre/post probes, disc swaps and cache cleanup. **Copia log** copies it; **Pulisci log** clears only the visible in-memory log and deliberately does not append a new log line after clearing.
+The configured archive root and its ancestors are refused as persistent Bubblejail shares. Optical content is exposed only through the reviewed dynamic Retro Optical path.
 
-## Verifier validation
+## CDEmu + UDisks2
 
-The **Verifica** tab provides:
+From the **Test** tab, **Test CDEmu + UDisks2** should prove:
 
-- **Aggiorna Redump PC**;
-- **Aggiorna TOSEC**;
-- **Importa DAT locali…** under a separate `manual` source namespace;
-- **Verifica immagine**;
-- **Verifica set multidisco**;
-- **Scansiona protezioni**;
-- **Verifica + confronta scanner**.
+- temporary drive creation and mapping;
+- D-Bus image load/unload;
+- exact CDEmu optical block-device identity;
+- DPM, transfer-rate, bad-sector and CSS options get/set/get;
+- UDisks2 read-only mount;
+- denied write attempt;
+- safe temporary-device cleanup.
 
-Before testing a real archive, update/import DATs and confirm the catalog counter is non-zero. A successful exact result must say `MATCH 1:1`. An ambiguous duplicate must remain `AMBIGUOUS`; do not treat it as a verified unique match.
+`cdemu-client` is optional. RetroCD controls CDEmu through D-Bus. `udisksctl` is required for UDisks2 RO mounts and live multidisc behavior.
 
-The verifier must not change the dump tree. For a real test sample, record content hash and `mtime_ns` of descriptor/payload files before and after verification and confirm they are unchanged. Verification must work without mounting the image.
+## Bubblejail
 
-The protection scanner is evidence-only: it reads ISO9660/Joliet/common raw-sector layouts directly and performs a raw streaming signature pass. Use **Verifica + confronta scanner** to see an explicit DAT↔scanner statement. Scanner absence of a signature does not override a cryptographic DAT match, and scanner evidence does not by itself turn a DAT mismatch into a match.
+**Test Bubblejail** should prove:
 
-## Updater failure tests
+- whitelist audit PASS;
+- persistent `[network]` absent;
+- private HOME writable while a real host-HOME marker remains invisible;
+- configured RW paths writable;
+- configured RO paths visible but not writable;
+- a real temporary non-whitelisted host path remains invisible;
+- only loopback with network OFF;
+- Wayland and XWayland/X11 surfaces available according to the profile;
+- audio and GPU/Vulkan surfaces available as intended.
 
-The updater is deliberately transactional. It must satisfy all of the following:
+The real sentinel is created for the test and removed afterward. Isolation is never inferred from a machine-specific path that might simply not exist.
 
-- reject non-HTTPS URLs;
-- reject redirects to hosts outside the Redump/TOSEC allow-list;
-- reject path traversal and symlink members in ZIP archives;
-- bound download/member/unpacked sizes;
-- parse/index all staged DATs before replacing live data;
-- keep the previous DAT directory and SQLite catalog byte-identical if staging/parse fails;
-- restore the previous generation if a filesystem replace fails after the old generation has already been moved to rollback paths.
+## GPU fail-closed launch
 
-These cases are part of `tests/test_verifier_backend.py`.
+The automatic launch guard has already passed target-machine tests on the Ryzen 7 9800X3D iGPU and Radeon RX 9070 XT.
 
-## Operational Bottles test
+For any final acceptance launch require:
 
-The GUI may launch Bottles with no CD loaded, but a valid explicitly selected GPU is always required.
+- valid stable PCI identity;
+- selected DRM nodes present and live;
+- known non-selected DRM nodes absent;
+- exactly one Vulkan GPU with matching vendor/device IDs;
+- `DRI_PRIME` positively proven during pre-launch;
+- post-launch effective isolation proven through the already-running Bubblejail helper path.
 
-1. Enable network for one launch only.
-2. Start Bottles and install a runner.
-3. Close Bottles completely.
-4. Confirm the runner was written under the Bubblejail private HOME, normally `~/.local/share/bubblejail/instances/Bottles/home/.local/share/bottles/runners/`.
-5. Reopen with network OFF and confirm the runner is still available.
+Any missing proof must fail closed and terminate/refuse the launch rather than silently continue.
 
-This test previously passed with `soda-11.0-8` on the target CachyOS system.
+## Display and Bottles preferences
 
-## Whitelist
+The persistent display choices are:
 
-The **Whitelist** tab edits the real `root_share` section of:
+- **Auto**;
+- **Wayland nativo**;
+- **XWayland**.
 
-`~/.local/share/bubblejail/instances/Bottles/services.toml`
+XWayland is a compatibility fallback. It does not add network, filesystem, GPU or optical permissions. Bottles/GTK remains free to use Wayland while Wine/Proton takes the X11/XWayland path.
 
-RO and RW entries are separate. Before writing, the GUI validates and canonicalizes paths, refuses broad/overlapping shares, and creates a backup at:
+Bottles global preferences use `GSETTINGS_BACKEND=keyfile` inside the private Bubblejail HOME. Dark mode and the temporary/cache preference have already been confirmed persistent after a complete Bottles close/reopen.
 
-`services.toml.bottles-retro-cd.bak`
+## CD → Bubblejail
 
-The CDEmu mount is never added to the persistent whitelist; it is injected RO for the individual launch/test only.
+The integrated test creates a temporary CDEmu drive and real host sentinel directories, then verifies:
+
+- the exact `/dev/srX` is visible when explicitly requested;
+- `/mnt/cdemu` is visible and read-only when a filesystem mount is enabled;
+- unrelated real host sentinels are not visible;
+- cleanup unloads/unmounts and removes temporary resources safely.
+
+## Multidisc
+
+A saved explicit set is required for live multidisc. Autodetection is only advisory and is never persisted as policy.
+
+The target end-to-end acceptance remains:
+
+1. load Disc 1;
+2. enable UDisks2 RO + `/mnt/cdemu` + live multidisc;
+3. launch Bottles;
+4. require launch security probes PASS;
+5. swap 1→2→3→2 without closing Bottles;
+6. close Bottles;
+7. require automatic cache cleanup.
+
+Discworld Noir three-disc live swapping has already passed this validation.
+
+## Verifier
+
+The **Verifica** tab provides official Redump PC/TOSEC updates, local DAT import, single/set verification, protection scan and DAT↔scanner comparison.
+
+Required invariants:
+
+- exact known data reports `MATCH 1:1`;
+- duplicate complete records remain `AMBIGUOUS`;
+- incorrect/partial data remains `MISMATCH`;
+- verification never mounts or executes the dump;
+- descriptor/payload content and `mtime_ns` remain unchanged;
+- scanner evidence never overrides cryptographic DAT matching.
+
+The updater must remain HTTPS-only to approved official hosts, bounded, staged and rollback-safe.
+
+## Operational runner test
+
+Runner persistence has already passed on the target system. To repeat:
+
+1. enable network for one launch;
+2. install/download a runner in Bottles;
+3. close Bottles fully;
+4. reopen with network OFF;
+5. confirm the runner remains under Bubblejail's private HOME and is still usable.
 
 ## Security boundary
 
-The whitelist constrains Bottles/Wine inside Bubblejail. The GTK controller, verifier, CDEmu daemon and libMirage remain host-side and run with the logged-in user's normal permissions. All optical/DAT parsing paths therefore treat their inputs as untrusted data.
-
-## Final multidisc validation before release
-
-A saved explicit set is required for live multidisc. Existing sets are reused unchanged. To create a new set from Disc 1, select its original descriptor and press **Crea set da questo disco**, then add Disc 2/3 with **Aggiungi disco…**. Autodetection is only a hint and is not persisted automatically.
-
-The end-to-end hardware test remains: load Disc 1 on the active CDEmu drive, enable UDisks2 RO + `/mnt/cdemu` + live multidisc, launch Bottles, confirm both GPU probe PASS lines, swap 1→2→3→2 without closing Bottles, then close Bottles and verify the log first reports cache cleanup start and then successful cleanup. Cleanup runs on a worker so the GTK UI stays responsive.
+Bubblejail protects Bottles/Wine. The GTK controller, verifier, CDEmu daemon and libMirage are host-side and run with the logged-in user's permissions, so all host-side archive/DAT parsing treats inputs as untrusted data.
