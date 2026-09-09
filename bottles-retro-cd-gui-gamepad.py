@@ -15,6 +15,7 @@ Gtk = _life.Gtk
 GLib = _life.GLib
 
 from gamepad_backend import GamepadBackend, detect_host_gamepads  # noqa: E402
+from gamepad_hotplug import GamepadHotplugMonitor  # noqa: E402
 
 
 class Window(_life.Window):
@@ -23,7 +24,9 @@ class Window(_life.Window):
     def __init__(self, app):
         super().__init__(app)
         self.gamepad = GamepadBackend(_life._ext._base.INSTANCE)
+        self._gamepad_hotplug: GamepadHotplugMonitor | None = None
         self._install_gamepad_controls()
+        self._enable_sandbox_scroll()
         self.refresh_gamepad_status()
 
     def _install_gamepad_controls(self) -> None:
@@ -37,6 +40,15 @@ class Window(_life.Window):
             selectable=True,
         )
         box.append(self.gamepad_status)
+
+        self.gamepad_hotplug_status = Gtk.Label(
+            label="Hotplug: in attesa del prossimo avvio Bottles",
+            xalign=0,
+            wrap=True,
+            selectable=True,
+        )
+        self.gamepad_hotplug_status.add_css_class("dim-label")
+        box.append(self.gamepad_hotplug_status)
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         box.append(actions)
@@ -54,10 +66,11 @@ class Window(_life.Window):
 
         note = Gtk.Label(
             label=(
-                "Usa esclusivamente il servizio Bubblejail [joystick]: vengono esposti i nodi "
-                "jsX del controller e i relativi eventX, non l'intero /dev/input. "
-                "Nessun /dev/hidraw viene aggiunto da RetroCD. Collega il controller prima "
-                "di avviare Bottles; hotplug/reconnect non è garantito nella 0.4.0."
+                "Usa il servizio Bubblejail [joystick] e, dopo il lancio, un broker host-side che "
+                "entra soltanto nel mount namespace della stessa istanza per riconciliare i jsX/eventX "
+                "dei gamepad realmente presenti. /dev/input non viene condiviso globalmente e /dev/hidraw "
+                "resta escluso. Disconnect, reconnect e collegamento a Bottles già aperto vengono verificati "
+                "dall'interno della jail dopo ogni cambio."
             ),
             xalign=0,
             wrap=True,
@@ -73,6 +86,25 @@ class Window(_life.Window):
             raise RuntimeError(
                 "Layout Sandbox inatteso: impossibile inserire il supporto gamepad."
             )
+
+    def _enable_sandbox_scroll(self) -> None:
+        page = self.launch_btn.get_parent()
+        if not isinstance(page, Gtk.Box):
+            raise RuntimeError("Layout Sandbox inatteso: pagina non riconosciuta per lo scroll.")
+        page_num = self.notebook.page_num(page)
+        if page_num < 0:
+            raise RuntimeError("Pagina Sandbox non trovata nel notebook.")
+        current = self.notebook.get_current_page()
+        self.notebook.remove_page(page_num)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_hexpand(True)
+        scroll.set_vexpand(True)
+        scroll.set_child(page)
+        self.notebook.insert_page(scroll, Gtk.Label(label="Sandbox"), page_num)
+        if current == page_num:
+            self.notebook.set_current_page(page_num)
+        self.sandbox_scroller = scroll
 
     def refresh_gamepad_status(self):
         status = getattr(self, "gamepad_status", None)
@@ -112,16 +144,44 @@ class Window(_life.Window):
     def test_gamepad(self) -> str:
         return self.gamepad.test()
 
+    def _hotplug_callback(self, text: str, error: bool) -> None:
+        GLib.idle_add(self._apply_hotplug_report, text, error)
+
+    def _apply_hotplug_report(self, text: str, error: bool):
+        status = getattr(self, "gamepad_hotplug_status", None)
+        if status is not None:
+            status.set_text(text)
+        self.append_log(text)
+        if error:
+            self.set_message(text, True)
+        return False
+
+    def _start_hotplug_monitor(self) -> None:
+        old = self._gamepad_hotplug
+        if old is not None:
+            old.stop()
+        monitor = GamepadHotplugMonitor(
+            _life._ext._base.INSTANCE,
+            callback=self._hotplug_callback,
+        )
+        self._gamepad_hotplug = monitor
+        monitor.start()
+        GLib.idle_add(
+            self.gamepad_hotplug_status.set_text,
+            "Hotplug: broker exact-node avviato; in corso la prova sul mount namespace…",
+        )
+
     def launch_bottles(self):
         gamepad_enabled = self.gamepad.enabled()
         host_devices = detect_host_gamepads() if gamepad_enabled else ()
         result = super().launch_bottles()
         if not gamepad_enabled:
             return str(result) + " · gamepad OFF"
+        self._start_hotplug_monitor()
         if not host_devices:
-            return str(result) + " · gamepad ON · nessun controller collegato all'avvio"
+            return str(result) + " · gamepad ON · hotplug attivo, nessun controller collegato all'avvio"
         names = ", ".join(device.name for device in host_devices)
-        return str(result) + f" · gamepad ON ({names})"
+        return str(result) + f" · gamepad ON ({names}) · hotplug attivo"
 
     def refresh_all(self):
         result = super().refresh_all()

@@ -27,6 +27,8 @@ jobs:
           disc_sets_backend.py
           display_backend.py
           gamepad_backend.py
+          gamepad_hotplug.py
+          gamepad_ns_helper.py
           gpu_backend.py
           multidisc_backend.py
           protection_scanner.py

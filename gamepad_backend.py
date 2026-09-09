@@ -314,7 +314,6 @@ class GamepadBackend:
                 "[PASS] /dev/hidraw* non esposto",
                 "[INFO] nodi scrivibili (force-feedback se supportato): "
                 + (", ".join(writable) if writable else "nessuno"),
-                "[INFO] collega il controller prima di avviare Bottles; "
-                "hotplug/reconnect non è garantito nella 0.4.0",
+                "[INFO] hotplug/reconnect exact-node: viene attivato e verificato automaticamente dopo l'avvio Bottles",
             ]
         )
