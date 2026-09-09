@@ -8,6 +8,8 @@ Branch reviewed: `hardening/retro-optical-boundary-v2`
 
 Base branch: `main` at `216ab5978f23ecf4b403b521c321cf778b81c343`
 
+> Historical review record. Later 0.4.0 pre-packaging work added portable archive-root configuration, Wayland/XWayland selection and isolated Bottles preference persistence without changing the Point-5 optical trust boundary. See `REVIEW.md` and `docs/ROADMAP.md` for current release status.
+
 ## Scope
 
 The review covered Point 5 (Retro Optical / CDEmu + libMirage hardening and lifecycle) plus regression checks for Points 1–4.
@@ -38,18 +40,18 @@ Validated behaviours:
 - Radeon RX 9070 XT launch: pre/post PASS;
 - `Espelli tutto`: target-tested successfully on RetroCD-managed media;
 - lifecycle health check: PASS with `kernel:linux-cachyos`, CDEmu 3.3.1, libMirage 3.3.3, API 7.0;
-- updater negative paths: rejects loaded media, prepares the expected `sudo pacman -Syu --needed cdemu-daemon libmirage cdemu-client` transaction, opens an interactive terminal helper, and allows cancellation without changing packages;
+- updater negative paths: rejects loaded media, prepares the expected full-system package transaction, opens an interactive terminal helper, and allows cancellation without changing packages;
 - GTK frontend remained open and stable after main-loop marshalling fix.
 
 ## Regression review of Points 1–4
 
-- Persistent settings backend unchanged by Point 5; private permissions and corrupt-config fallback remain covered by unit tests.
-- GPU policy unchanged apart from parser hardening; both target GPUs passed the final pre/post probes.
-- Multidisc core backend and bridge were not rewritten by Point 5; live switching and cleanup passed again on target.
-- Redump/TOSEC verifier and protection scanner were not rewritten by Point 5; the complete verifier/scanner test suite remained green, and prior target source-immutability validation remains applicable.
+- Persistent settings backend remained compatible with private permissions and corrupt-config fallback.
+- GPU policy remained fail-closed; both target GPUs passed final pre/post probes.
+- Multidisc core/bridge remained intact; live switching and cleanup passed again on target.
+- Redump/TOSEC verifier and protection scanner remained green and retained source-immutability guarantees.
 
-## Merge gate
+## Merge gate at the time
 
-The branch is eligible for merge to `main` only after the final branch CI for this review record is green. No force push is permitted.
+The Point-5 branch was eligible for merge only after its branch CI and target-machine acceptance passed. That gate is complete.
 
-Next roadmap item after merge: **dgVoodoo2 manager**, then **Arch/CachyOS packaging**.
+Current work has moved to the 0.4.0 pre-packaging review and Arch/CachyOS packaging; legacy DirectX compatibility managers are post-0.4.0 work.
