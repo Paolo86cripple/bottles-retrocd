@@ -16,6 +16,7 @@ In scope:
 
 - Bottles/Wine execution inside Bubblejail;
 - safe per-launch GPU selection;
+- native Wayland plus explicit XWayland compatibility fallback;
 - CDEmu/libMirage optical-media handling;
 - UDisks2 verified read-only mounts;
 - safe multidisc/disc swapping;
@@ -42,8 +43,9 @@ The old PC Game Manager project is not the architecture to continue. Only useful
 - CDEmu/libMirage image parsing happens on the host.
 - Redump/TOSEC DAT parsing, hashing and protection scanning happen on the host.
 - Bubblejail is the security boundary for Bottles/Wine, not for the controller, verifier or libMirage.
-- CDEmu is controlled through its D-Bus API model rather than localized CLI-output parsing.
+- CDEmu is controlled through its D-Bus API model rather than localized CLI-output parsing. `cdemu-client` is optional.
 - UDisks2 mount state must be verified, not inferred from command success.
+- The archive root is an explicit persistent setting; no user-specific storage location is hardcoded into the release.
 
 Do not replace this design with another sandbox stack unless there is a demonstrated security or compatibility reason.
 
@@ -57,10 +59,10 @@ Security regressions are release blockers.
 - Host filesystem exposure is deny-by-default.
 - Persistent shares use an explicit Bubblejail whitelist with separate RO and RW paths.
 - Canonicalize and validate whitelist paths before writing configuration.
-- Reject real HOME, broad system roots, the Data root/ancestors, unsafe overlap, and equivalent over-broad paths.
+- Reject real HOME, broad system roots, the configured RetroCD archive root and its ancestors, unsafe overlap, and equivalent over-broad paths.
 - Dynamic optical/cache mounts into the jail must use `ro-bind`.
-- Never expose the broad `/run/media` tree merely to make optical media work.
-- Unrelated paths below the user's Data storage must remain invisible.
+- Never expose broad `/run/media`, `/mnt`, storage-root, or archive-root trees merely to make optical media work.
+- Isolation tests must create a real temporary host sentinel and prove that it is invisible inside Bubblejail; do not infer isolation from a path that may not exist.
 
 ### Network
 
@@ -69,6 +71,15 @@ Security regressions are release blockers.
 - Bottles network may be enabled only transiently for the selected launch.
 - Do not weaken this rule to simplify runner downloads or setup. Download with a temporary network-enabled launch, then verify persistence with network OFF.
 - Verifier DAT updates use a separate, narrower network policy: HTTPS only, explicit official Redump/TOSEC host allow-list, and redirect revalidation.
+
+### Display
+
+- `Auto` is the neutral/default display policy.
+- Native Wayland may be selected persistently when supported by the runner.
+- XWayland is an explicit compatibility fallback; it must not require broader filesystem, network, GPU or optical permissions.
+- XWayland keeps Bottles/GTK free to use Wayland while Wine/Proton is directed to the X11/XWayland path.
+- Forced XWayland requires the existing Bubblejail `x11` and `wayland` services; RetroCD must fail closed rather than silently add display permissions.
+- Bottles global GSettings use the isolated `keyfile` backend so preferences persist in Bubblejail's private HOME instead of writing host dconf.
 
 ### GPU
 
@@ -81,8 +92,9 @@ Security regressions are release blockers.
 - Apply Mesa GPU selection per launch; do not rewrite the persistent Bubblejail profile merely to change GPU.
 - Bubblejail 0.10.x `direct_rendering` is too broad for strict multi-GPU isolation: mask `/dev/dri` at runtime and bind back only the selected GPU's DRM card/render nodes.
 - Every normal Bottles launch must run a fail-closed **pre-launch** GPU probe that positively proves `DRI_PRIME`, selected DRM-node presence, known non-selected DRM-node absence, exactly one Vulkan device, and matching vendor/device identity.
-- Every normal Bottles launch must then run a fail-closed **post-launch proof against the already-running Bubblejail instance**. On Bubblejail 0.10.4 this must be injected through the running instance helper (`bubblejail run --wait <instance> /bin/sh -c <probe>`), not `--debug-shell`: when the instance is already running, Bubblejail switches to helper RPC and forwards the positional command. The post-launch proof does not require the injected process's `DRI_PRIME` marker, but it still must positively prove selected DRM-node presence, known non-selected DRM-node absence, exactly one Vulkan device, and matching vendor/device identity. If helper injection or proof fails, terminate the exact launch process group and report launch failure.
+- Every normal Bottles launch must then run a fail-closed **post-launch proof against the already-running Bubblejail instance**. On Bubblejail 0.10.4 this uses `bubblejail run --wait <instance> /bin/sh -c <probe>`, not `--debug-shell`.
 - Absence of a required success/proof marker is failure; do not infer success from lack of an explicit failure marker.
+- If helper injection or post-launch proof fails, terminate the exact launch process group and report launch failure.
 - The manual Vulkan/GPU test must use the same strict validator as the normal launch path.
 - Do not further hide GPU-related sysfs unless a concrete threat or requirement justifies the Mesa/udev compatibility risk.
 
@@ -93,12 +105,13 @@ Security regressions are release blockers.
 - `/sys/class/block/srX/ro` is diagnostic only. VHBA/CDEmu may legitimately report `ro=0` even when the image filesystem is safely mounted read-only.
 - The security decision for mounted media is the verified UDisks2 read-only filesystem state.
 - `/dev/sgX` is broader SCSI access and must remain optional and OFF by default.
+- The CDEmu D-Bus service and `/dev/vhba_ctl` must not be exposed to Bottles/Wine.
 
 ## Multidisc rules
 
 Archive fidelity is mandatory.
 
-- Persistent disc sets store references to the user's original descriptors under the retro archive tree.
+- Persistent disc sets store references to the user's original descriptors under the configured archive root.
 - Never copy, rename, rewrite, modify, touch, or symlink original CUE/BIN/image files merely to create a set.
 - Creating an explicit set starts from the exact selected descriptor; Disc 1 must always be usable as the anchor.
 - Automatic filename grouping is advisory only and must never silently become persisted truth.
@@ -172,6 +185,9 @@ The verifier is implemented and is part of the project baseline. Do not treat it
 - Use `~/.config/bottles-retro-cd/` for application configuration.
 - Configuration directory mode: `0700`.
 - Sensitive metadata/config files such as `config.toml` and `disc-sets.toml`: `0600`.
+- Config schema 2 persists `gpu_pci`, `display_backend` and `archive_root`.
+- Existing pre-schema-2 target installs may migrate the old `/run/media/<user>/Data/Downloads/retropc` archive location only when it actually exists; migration stores the path and never moves or modifies archive data.
+- New installations must choose an archive root explicitly; no machine-specific removable-storage default is allowed.
 - Verifier catalog data belongs under XDG data storage; hash/cache data belongs under XDG cache storage.
 - Persist stable identifiers and user intent, not volatile kernel numbering.
 - Preserve compatibility with existing settings whenever possible; migrations must be explicit and safe.
@@ -213,9 +229,9 @@ Baseline release tests:
    - private HOME writable and real host HOME marker invisible;
    - configured RW paths writable;
    - configured RO paths reject writes;
-   - unrelated Data path invisible;
+   - a real temporary non-whitelisted host sentinel is invisible;
    - only loopback with base network OFF;
-   - Wayland, XWayland, audio, GPU/Vulkan and dconf checks pass.
+   - Wayland, XWayland, audio and GPU/Vulkan checks pass.
 
 3. **GPU fail-closed launch**
    - run **Test Vulkan** for each selectable GPU;
@@ -229,31 +245,46 @@ Baseline release tests:
    - temporary CDEmu drive and RO host mount;
    - optional raw `/dev/srX` is the validated CDEmu optical device;
    - `/mnt/cdemu` visible but not writable;
-   - unrelated Data paths remain hidden;
+   - real temporary host sentinels remain hidden;
    - cleanup removes temporary resources.
 
-5. **Runner persistence**
-   - launch once with temporary network ON;
-   - install/download runner;
-   - close Bottles fully;
-   - confirm runner persists in Bubblejail private HOME;
-   - relaunch with network OFF and confirm it remains usable.
+5. **Runner/preferences persistence**
+   - launch once with temporary network ON and install/download a runner;
+   - close Bottles fully and confirm the runner persists in Bubblejail private HOME;
+   - relaunch with network OFF and confirm it remains usable;
+   - change Bottles global preferences such as dark mode/temp cleanup and verify persistence through the isolated GSettings keyfile backend.
 
-6. **Feature-specific tests**
+6. **Display fallback**
+   - validate native Wayland;
+   - validate XWayland with the same runner and sandbox permissions;
+   - verify XWayland does not require extra network/filesystem/GPU/optical permissions.
+
+7. **Feature-specific tests**
    - Multidisc: verify explicit-set membership, original-file content/mtime immutability, live swaps, rollback and automatic cleanup.
    - Redump/TOSEC verifier: run the full verifier/updater/scanner regression suite, verify a known real Redump set, and prove descriptor/payload content and `mtime_ns` are unchanged.
 
-Static checks before merge must include Python compilation, shell syntax, unit tests with `ResourceWarning` promoted to errors, and a scan ensuring forbidden execution patterns have not appeared.
+Static checks before merge must include Python compilation of every module, shell syntax, unit tests with `ResourceWarning` promoted to errors, and a scan ensuring forbidden execution patterns have not appeared.
 
 ## Current validated baseline
 
-The rc2/multidisc runtime baseline has been validated on CachyOS with Bubblejail 0.10.4, CDEmu daemon 3.3.1 and Bottles 67.1.
+The **0.4.0 pre-packaging candidate** has been validated on CachyOS with the existing Bubblejail/CDEmu/Bottles stack.
 
-Validated hardware paths include both available AMD GPUs, including the Ryzen 7 9800X3D integrated GPU and Radeon RX 9070 XT, and a three-disc Discworld Noir Redump set for live multidisc behavior. Those GPU tests validated the previous manual selector/isolation path; the new automatic pre/post-launch guard requires one final target-machine pass after integration.
+Validated target-machine paths include:
 
-The current candidate CI passes **73 tests total**: 19 original sandbox/settings/multidisc/bridge tests, 8 additional GPU fail-closed tests, 35 verifier/updater tests and 12 scanner tests, plus stricter CI/static checks. Treat a green branch CI as the minimum merge gate; repeat the real GPU/verifier/multidisc validation on the target system after integration.
+- both available AMD GPUs, including the Ryzen 7 9800X3D integrated GPU and Radeon RX 9070 XT, with automatic pre/post launch proof;
+- CDEmu/UDisks2 RO optical flow, optional raw `/dev/srX`, explicit `/dev/sgX`, multidisc cache/swap and cleanup;
+- Discworld Noir three-disc Redump set;
+- Bottles global preference persistence using `GSETTINGS_BACKEND=keyfile` inside the private HOME;
+- `proton-cachyos-native` + D7VK with Discworld Noir;
+- native Wayland working, with XWayland validated as the compatibility fallback and providing immediate fullscreen for Discworld Noir;
+- network OFF baseline and temporary network ON runner persistence;
+- verifier/source immutability and lifecycle/update negative paths.
 
-See these files for detailed current evidence and caveats:
+The current release-review branch CI passes **130 tests total**, plus Python compilation (including `display_backend.py`), `ResourceWarning`-as-error, shell syntax and forbidden dynamic-execution scanning.
+
+The next target-machine gate before merge is the portable archive-root migration/selection plus the real sentinel integration test. After that, packaging may begin.
+
+See these files for detailed evidence and caveats:
 
 - `README.md`
 - `README-TESTING.md`
@@ -267,14 +298,21 @@ When documentation and implementation diverge, investigate and update both; do n
 ## Git workflow
 
 - `main` is the integration branch and should remain in a tested, usable state.
-- Develop non-trivial features on focused branches such as `feature/<name>`.
+- Develop non-trivial features on focused branches such as `feature/<name>` or `review/<name>`.
 - Keep commits focused and descriptive.
 - Run static/unit checks before committing and real-machine integration checks before declaring a security-sensitive feature finished.
 - Compare the feature branch against `main` before merge and confirm only intended files changed.
-- Prefer fast-forward/rebase or a clean reviewed merge according to the branch history; never force-update `main` merely to simplify history.
+- Prefer a clean reviewed merge; never force-update `main` merely to simplify history.
 - After integration, verify remote `main`, then remove obsolete feature branches only when they are no longer useful.
 - Do not commit generated caches, local machine state, private Bottles prefixes, mounted media, DAT downloads or user-specific absolute paths.
 
 ## Near-term roadmap
 
-The **Redump/TOSEC verifier is implemented**. Near-term work should focus on the final real-machine validation of the recovered verifier and automatic GPU launch guard, any persistent per-profile verifier preferences that prove useful, and recovery hardening for abnormal live-multidisc termination. Do not reimplement the verifier from scratch unless a concrete defect requires architectural replacement.
+The feature baseline for 0.4.0 is frozen except for release blockers. Immediate work is:
+
+1. finish this pre-packaging review and target-machine archive-root test;
+2. create Arch/CachyOS packaging, desktop integration and clean install/remove behavior;
+3. run package-installed acceptance tests;
+4. tag and publish 0.4.0.
+
+Legacy DirectX wrappers such as dgVoodoo2/DxWrapper and optional libRashader/Slang support are **post-0.4.0** compatibility features and must remain OFF by default when introduced. Do not delay packaging by adding them to the 0.4.0 feature set.
