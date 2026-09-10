@@ -33,11 +33,15 @@ class Window(_game.Window):
 
     def __init__(self, app):
         self.cdemu_ownership = CDEmuOwnershipStore()
+        self._cdemu_stale_watch_id: int | None = None
         super().__init__(app)
         self.verifier_sandbox = VerifierSandbox()
         self.updater_sandbox = VerifierUpdaterSandbox()
         self._install_verifier_sandbox_test()
 
+    # ------------------------------------------------------------------
+    # Verifier / updater boundaries already target-validated in 0.4.1.
+    # ------------------------------------------------------------------
     def _verifier_root(self) -> Path:
         root = getattr(self, "_archive_root", None)
         if not isinstance(root, Path) or not root.is_dir():
@@ -99,6 +103,26 @@ class Window(_game.Window):
         GLib.idle_add(self.verifier_result.set_text, result.text)
         return result.text
 
+    # ------------------------------------------------------------------
+    # CDEmu inter-process ownership and crash recovery.
+    # ------------------------------------------------------------------
+    def _arm_stale_cdemu_watch(self):
+        if self._cdemu_stale_watch_id is None:
+            self._cdemu_stale_watch_id = GLib.timeout_add_seconds(2, self._poll_stale_cdemu_recovery)
+        return False
+
+    def _poll_stale_cdemu_recovery(self):
+        if self.sandbox.running() or self.busy:
+            return True
+        self._cdemu_stale_watch_id = None
+
+        def recover_for_log():
+            text = self._recover_stale_cdemu_state()
+            return text or "Recovery CDEmu: nessuna risorsa stale residua."
+
+        self.background(recover_for_log, report=True)
+        return False
+
     def _cleanup_owned_journal(self, *, stale_recovery: bool) -> tuple[str, ...]:
         if self.cdemu is None:
             raise CDEmuOwnershipError("CDEmu non connesso: ownership non verificabile.")
@@ -114,6 +138,7 @@ class Window(_game.Window):
         return result.messages
 
     def _recover_stale_cdemu_state(self) -> str:
+        """Recover a previous crashed session only after acquiring its released lock."""
         if self.cdemu is None or self.cdemu_ownership.session_locked:
             return ""
         self.cdemu_ownership.acquire_session_lock(timeout=0.25)
@@ -122,9 +147,10 @@ class Window(_game.Window):
             if session is None:
                 return ""
             if self.sandbox.running():
+                GLib.idle_add(self._arm_stale_cdemu_watch)
                 return (
                     "Recovery CDEmu rinviato: esiste un journal precedente ma Bottles/Bubblejail è ancora attivo; "
-                    "nessun device viene toccato."
+                    "nessun device viene toccato e il recovery riproverà alla chiusura del gioco."
                 )
             messages = self._cleanup_owned_journal(stale_recovery=True)
             return "Recovery CDEmu: " + "; ".join(messages)
@@ -133,6 +159,7 @@ class Window(_game.Window):
 
     @contextmanager
     def _cdemu_operation(self):
+        """Serialize mutating CDEmu work and resolve stale ownership first."""
         if not self.cdemu_ownership.session_locked:
             self._recover_stale_cdemu_state()
         with self.cdemu_ownership.operation(timeout=2.0):
@@ -150,8 +177,7 @@ class Window(_game.Window):
                 recovery = self._recover_stale_cdemu_state()
             except CDEmuOwnershipBusy as exc:
                 self.set_message(
-                    f"CDEmu ownership: {exc} Le letture restano disponibili; le mutazioni saranno rifiutate.",
-                    True,
+                    f"CDEmu ownership: {exc} Le letture restano disponibili; le mutazioni saranno rifiutate.", True
                 )
             except Exception as exc:
                 self.set_message(f"Recovery CDEmu sospeso in sicurezza: {exc}", True)
@@ -161,12 +187,11 @@ class Window(_game.Window):
         return result
 
     def _prepare_disc_cache(self, disc_set):
-        """Create a live multidisc cache with staged write-ahead ownership evidence."""
+        """Create a live multidisc cache with write-ahead ownership evidence."""
         if self.cdemu is None:
             raise RuntimeError("CDEmu non connesso.")
         if not disc_set.multidisc:
             raise RuntimeError("La cache live richiede un set multidisco.")
-
         self.cdemu_ownership.acquire_session_lock(timeout=2.0)
         journal_started = False
         cache: dict[str, tuple[int, str, str]] = {}
@@ -177,12 +202,9 @@ class Window(_game.Window):
             base_count = self.cdemu.number_of_devices()
             expected_images = tuple(str(entry.image.resolve(strict=True)) for entry in disc_set.discs)
             self.cdemu_ownership.begin(
-                daemon_identity=self.cdemu.daemon_identity(),
-                base_count=base_count,
-                expected_images=expected_images,
+                daemon_identity=self.cdemu.daemon_identity(), base_count=base_count, expected_images=expected_images
             )
             journal_started = True
-
             for entry in disc_set.discs:
                 image = entry.image.resolve(strict=True)
                 session = self.cdemu_ownership.load()
@@ -192,18 +214,9 @@ class Window(_game.Window):
                 self.cdemu_ownership.set_pending(index=expected_index, image=str(image))
                 index = self.cdemu.add_device()
                 if index != expected_index:
-                    raise CDEmuOwnershipError(
-                        f"AddDevice ha restituito #{index}, atteso esattamente #{expected_index}."
-                    )
+                    raise CDEmuOwnershipError(f"AddDevice ha restituito #{index}, atteso esattamente #{expected_index}.")
                 sr, sg = self.cdemu.wait_mapping(index)
                 self.validate_cdemu_optical_device(sr)
-
-                # Persist ownership immediately after mapping+rdev proof. A crash
-                # after this point can safely recover even before load/mount.
-                self.cdemu_ownership.commit_pending(
-                    OwnedDevice(index, str(image), sr, sg, "", block_rdev(sr))
-                )
-
                 self.cdemu.load(index, image)
                 loaded, filenames = self.cdemu.wait_loaded(index, True)
                 actual = tuple(str(Path(name).resolve(strict=False)) for name in filenames)
@@ -215,12 +228,10 @@ class Window(_game.Window):
                 mount = self.ensure_ro_mount(sr)
                 target, ro = self.mount_info(sr)
                 if not target or not ro or target != mount:
-                    raise CDEmuOwnershipError(
-                        f"Cache Disco {entry.number}: mount RO non verificato per {sr}."
-                    )
-                self.cdemu_ownership.update_resource_mount(index, mount)
+                    raise CDEmuOwnershipError(f"Cache Disco {entry.number}: mount RO non verificato per {sr}.")
+                resource = OwnedDevice(index, str(image), sr, sg, mount, block_rdev(sr))
+                self.cdemu_ownership.commit_pending(resource)
                 cache[self._disc_cache_key(image)] = (index, sr, mount)
-
             self.cdemu_ownership.activate()
             if len(cache) != len(disc_set.discs):
                 raise CDEmuOwnershipError("Cache multidisco incompleta dopo attivazione journal.")
@@ -235,6 +246,7 @@ class Window(_game.Window):
             raise RuntimeError(f"Preparazione cache CDEmu fallita: {primary}.{suffix}") from primary
 
     def _cleanup_disc_cache(self, cache, base_count):
+        """Replace RAM-only suffix cleanup with journal-authorized cleanup."""
         if not self.cdemu_ownership.session_locked:
             try:
                 self.cdemu_ownership.acquire_session_lock(timeout=0.25)
@@ -247,9 +259,7 @@ class Window(_game.Window):
                     return ["cache CDEmu presente senza journal ownership: RemoveDevice rifiutato"]
                 return []
             if base_count is not None and base_count != session.base_count:
-                return [
-                    f"base_count cache={base_count} diverso dal journal={session.base_count}: cleanup rifiutato"
-                ]
+                return [f"base_count cache={base_count} diverso dal journal={session.base_count}: cleanup rifiutato"]
             self._cleanup_owned_journal(stale_recovery=False)
             return []
         except Exception as exc:
@@ -263,12 +273,9 @@ class Window(_game.Window):
         if not self.active_bridge_cache:
             recovery = self._recover_stale_cdemu_state()
             return [recovery] if recovery else []
-
         if self.active_bridge is not None:
             self.active_bridge.stop()
-        warnings = self._cleanup_disc_cache(
-            dict(self.active_bridge_cache), self.active_bridge_cache_base_count
-        )
+        warnings = self._cleanup_disc_cache(dict(self.active_bridge_cache), self.active_bridge_cache_base_count)
         if warnings:
             return warnings
         self.active_bridge = None
@@ -305,9 +312,7 @@ class Window(_game.Window):
         if had_cache:
             notes = self._cleanup_inactive_live_session()
             if notes:
-                raise CDEmuOwnershipError(
-                    "Espelli tutto: cleanup cache ownership non completato: " + "; ".join(notes)
-                )
+                raise CDEmuOwnershipError("Espelli tutto: cleanup cache ownership non completato: " + "; ".join(notes))
         with self._cdemu_operation():
             text = super().eject_all_retrocd_media()
         if had_cache:
@@ -319,7 +324,6 @@ class Window(_game.Window):
         if not live_requested:
             with self._cdemu_operation():
                 return super().launch_bottles()
-
         self.cdemu_ownership.acquire_session_lock(timeout=2.0)
         try:
             if self.cdemu_ownership.load() is not None:
@@ -333,18 +337,17 @@ class Window(_game.Window):
     def _runtime_update_preflight(self):
         super()._runtime_update_preflight()
         if self.cdemu_ownership.session_locked:
-            raise CDEmuOwnershipError(
-                "Sessione ownership CDEmu ancora attiva: aggiornamento componenti rifiutato."
-            )
+            raise CDEmuOwnershipError("Sessione ownership CDEmu ancora attiva: aggiornamento componenti rifiutato.")
         with self.cdemu_ownership.operation(timeout=0.25):
             if self.cdemu_ownership.load() is not None:
-                raise CDEmuOwnershipError(
-                    "Journal CDEmu non risolto: aggiornamento componenti rifiutato."
-                )
+                raise CDEmuOwnershipError("Journal CDEmu non risolto: aggiornamento componenti rifiutato.")
 
     def on_close_request(self, *args):
         blocked = super().on_close_request(*args)
         if not blocked:
+            if self._cdemu_stale_watch_id is not None:
+                GLib.source_remove(self._cdemu_stale_watch_id)
+                self._cdemu_stale_watch_id = None
             self.cdemu_ownership.close()
         return blocked
 
