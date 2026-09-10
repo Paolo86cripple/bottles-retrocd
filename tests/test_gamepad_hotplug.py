@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import gamepad_hotplug as hotplug
+import gamepad_ns_entry as ns_entry
 import gamepad_ns_helper as ns_helper
 from gamepad_backend import GamepadDevice, GamepadProbe
 
@@ -191,6 +192,30 @@ class GamepadHotplugTests(unittest.TestCase):
             b"/dev/input/js0",
             ns_helper.MOVE_MOUNT_F_EMPTY_PATH,
         )
+
+    def test_runtime_routes_through_mount_owner_entry_helper(self):
+        self.assertEqual("gamepad_ns_entry.py", hotplug.NS_HELPER.name)
+
+    def test_mount_namespace_owner_is_discovered_with_ns_get_userns(self):
+        with mock.patch.object(ns_entry.fcntl, "ioctl", return_value=73) as ioctl:
+            self.assertEqual(73, ns_entry._owning_userns(41))
+        ioctl.assert_called_once_with(41, ns_entry.NS_GET_USERNS)
+
+    def test_reopen_pinned_rejects_changed_device_identity(self):
+        pinned = SimpleNamespace(
+            st_dev=1, st_ino=2, st_mode=stat.S_IFCHR, st_rdev=3
+        )
+        changed = SimpleNamespace(
+            st_dev=1, st_ino=9, st_mode=stat.S_IFCHR, st_rdev=3
+        )
+        with (
+            mock.patch.object(ns_entry.os, "open", return_value=55),
+            mock.patch.object(ns_entry.os, "fstat", side_effect=(changed, pinned)),
+            mock.patch.object(ns_entry.os, "close") as close,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Risorsa host cambiata"):
+                ns_entry._reopen_pinned(ns_entry.Path("/dev/input/js0"), 12)
+        close.assert_called_once_with(55)
 
 
 if __name__ == "__main__":
