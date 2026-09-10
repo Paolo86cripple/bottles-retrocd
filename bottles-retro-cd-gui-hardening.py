@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""0.4.1 hardening wrapper: route archive parsing through verifier sandbox."""
+"""0.4.1 hardening wrapper: isolate verifier/scanner and official DAT updater."""
 from __future__ import annotations
 
 import importlib.util
@@ -16,14 +16,16 @@ Gtk = _game.Gtk
 GLib = _game.GLib
 
 from verifier_sandbox import VerifierSandbox  # noqa: E402
+from verifier_updater_sandbox import VerifierUpdaterSandbox  # noqa: E402
 
 
 class Window(_game.Window):
-    """Keep the released game boundary unchanged; isolate verifier/scanner reads."""
+    """Keep the released game boundary unchanged; isolate archive/DAT parsing."""
 
     def __init__(self, app):
         super().__init__(app)
         self.verifier_sandbox = VerifierSandbox()
+        self.updater_sandbox = VerifierUpdaterSandbox()
         self._install_verifier_sandbox_test()
 
     def _verifier_root(self) -> Path:
@@ -52,6 +54,14 @@ class Window(_game.Window):
         text = result.format()
         GLib.idle_add(self.verifier_result.set_text, text)
         return text
+
+    def _update_catalog(self, source: str):
+        # Only the dedicated updater worker gets networking. It receives RW
+        # access solely to verifier data/cache and proves the configured game
+        # archive is not visible before starting the official update.
+        report = self.updater_sandbox.update(source, archive_root=self._verifier_root())
+        GLib.idle_add(self.refresh_verifier_status)
+        return self._format_update(report)
 
     def verify_selected_image(self):
         descriptor = self.selected_image()
