@@ -20,6 +20,7 @@ jobs:
           bottles-retro-cd-gui-lifecycle.py
           bottles-retro-cd-gui-gamepad.py
           bottles-retro-cd-gui-hardening.py
+          bottles-retro-cd-gui-runtime-audit.py
           cdemu_backend.py
           cdemu_lifecycle.py
           cdemu_lifecycle_cli.py
@@ -36,6 +37,7 @@ jobs:
           multidisc_backend.py
           protection_scanner.py
           retro_optical.py
+          runtime_surface_audit.py
           sandbox_backend.py
           settings_backend.py
           verifier_backend.py
@@ -93,9 +95,9 @@ jobs:
               if required not in final_entry:
                   raise SystemExit(f'missing final release identity: {required}')
 
-          hardened_entry = Path('run-local.sh').read_text(encoding='utf-8')
-          if 'bottles-retro-cd-gui-hardening.py' not in hardened_entry:
-              raise SystemExit('run-local.sh does not use hardened verifier entrypoint')
+          local_entry = Path('run-local.sh').read_text(encoding='utf-8')
+          if 'bottles-retro-cd-gui-runtime-audit.py' not in local_entry:
+              raise SystemExit('run-local.sh does not use the current hardening runtime-audit entrypoint')
 
           expected = {
               'bottles-retrocd-launcher': '0ea1cd6d1a8ecf4ce90e97ac67ec1fe629c579bcfb8000f8d0be7d0433a05c39',
