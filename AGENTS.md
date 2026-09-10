@@ -350,9 +350,13 @@ Validated target-machine paths include:
 - network OFF baseline and temporary network ON runner persistence;
 - Xbox One S static Bubblejail path with only the exact current `jsX` + matching `eventX`, no unrelated input and no hidraw;
 - Xbox One S physical hotplug while Bottles remained running: initial `event9 + js0` PASS with `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`; disconnect PASS with no controller nodes and `udev=notified`; reconnect PASS with exact `event9 + js0`, `sysfs=exact`, `udev=notified`, `hidraw=hidden`;
+- schema-2 `archive_root` persistence with `0700` config directory and `0600` config file, plus identical pre/post archive metadata signatures after GUI re-selection;
+- resize + vertical scrolling across all notebook pages after the all-pages scroller fix;
+- final Bubblejail isolation test on target: **PASS=17 FAIL=0 WARN=0**, with real non-whitelist sentinel hidden, private HOME, host HOME/.ssh hidden, configured RW/RO behavior correct, base network limited to `lo`, Wayland/X11/audio/GPU/Vulkan/dconf all available as intended;
+- final CD → Bubblejail integration test with Discworld Noir Disc 1: temporary `/dev/sr1` validated as SCSI optical type 5, host mount verified RO, both freshly-created real non-whitelist sentinels hidden, `/mnt/cdemu` visible and non-writable, temporary drive cleanup PASS. VHBA block-layer `ro=RW` remains diagnostic only and does not override the verified RO filesystem policy;
 - verifier/source immutability and lifecycle/update negative paths.
 
-Automated regression baseline after the namespace-owner gamepad hotplug work: **151 unit tests PASS**, Python compilation for all application modules including `gamepad_ns_entry.py`, `ResourceWarning`-as-error PASS, `bash -n run-local.sh` PASS, and forbidden dynamic-execution scan PASS. CI on the validated hotplug/documentation branch has remained green.
+Automated regression baseline: **151 unit tests PASS**, Python compilation for all application modules including `gamepad_ns_entry.py`, `ResourceWarning`-as-error PASS, `bash -n run-local.sh` PASS, and forbidden dynamic-execution scan PASS. CI #320 on commit `2d0373d2e6ae08eb6dfd6616ad013d1c77058bac` is SUCCESS after the real-sentinel CD integration-test hardening.
 
 The gamepad implementation is frozen for 0.4.0 unless a new real release blocker is discovered.
 
@@ -368,17 +372,16 @@ Already closed:
 - GPU pre/post isolation on target hardware;
 - core Retro Optical pre/post isolation;
 - Discworld Noir XWayland fullscreen/audio compatibility;
-- existing multidisc/verifier/lifecycle target validation.
+- existing multidisc/verifier/lifecycle target validation;
+- schema-2 archive root, GUI persistence and archive immutability check;
+- resize + vertical scroll on all notebook pages;
+- final Test Bubblejail with real temporary host sentinel: 17 PASS, 0 FAIL, 0 WARN;
+- final Test CD → Bubblejail with real temporary integration sentinels, verified RO `/mnt/cdemu` and cleanup PASS.
 
 Remaining final-machine checks before merge/packaging:
 
-1. confirm schema-2 `archive_root` is correct and migration/selection does not modify dump contents/names/paths/mtimes;
-2. reselect the archive from the GUI, restart RetroCD and confirm persistence;
-3. confirm Sandbox vertical scrolling keeps all release controls reachable;
-4. run **Test Bubblejail** and require the real temporary non-whitelisted host sentinel to remain hidden;
-5. run **Test CD → Bubblejail** and require real integration sentinels hidden plus verified RO optical behavior;
-6. perform one final normal Bottles launch and require GPU pre/post + Retro Optical pre/post PASS;
-7. repeat the known-good XWayland Discworld Noir launch as the last compatibility regression.
+1. perform one final normal Bottles launch and require GPU pre/post + Retro Optical pre/post PASS;
+2. repeat the known-good XWayland Discworld Noir launch as the last compatibility regression. These may be satisfied by the same final Discworld Noir/XWayland session if that session produces all four isolation proof lines and the game itself still reaches the known-good fullscreen/audio state.
 
 Do not merge PR #3 until these are complete.
 
