@@ -23,6 +23,7 @@ jobs:
           cdemu_backend.py
           cdemu_lifecycle.py
           cdemu_lifecycle_cli.py
+          cdemu_ownership.py
           cdemu_update_cli.py
           disc_bridge.py
           disc_sets_backend.py
