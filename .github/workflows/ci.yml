@@ -48,6 +48,46 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Shell syntax
         run: bash -n run-local.sh
+      - name: Arch packaging syntax
+        run: |
+          bash -n packaging/arch/PKGBUILD packaging/arch/bottles-retrocd.install
+          sh -n packaging/arch/bottles-retrocd-launcher
+      - name: Arch desktop and metainfo metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import xml.etree.ElementTree as ET
+
+          root = Path('packaging/arch')
+          desktop = (root / 'io.github.Paolo86cripple.BottlesRetroCD.desktop').read_text(encoding='utf-8')
+          for required in (
+              'Type=Application',
+              'Name=Bottles RetroCD',
+              'Exec=bottles-retrocd',
+              'TryExec=bottles-retrocd',
+              'Terminal=false',
+          ):
+              if required not in desktop:
+                  raise SystemExit(f'missing desktop key: {required}')
+
+          tree = ET.parse(root / 'io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml')
+          component = tree.getroot()
+          if component.findtext('id') != 'io.github.Paolo86cripple.BottlesRetroCD':
+              raise SystemExit('unexpected AppStream component id')
+          if component.findtext('project_license') != 'GPL-3.0-or-later':
+              raise SystemExit('unexpected project license')
+
+          expected = {
+              'bottles-retrocd-launcher': '0ea1cd6d1a8ecf4ce90e97ac67ec1fe629c579bcfb8000f8d0be7d0433a05c39',
+              'io.github.Paolo86cripple.BottlesRetroCD.desktop': 'a1076b9bab5d8279e24f397a05e45094b004c791d5aa118d3ac38c84995c872f',
+              'io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml': 'c6c8a1619bfc4cb150b41aa6574d12c9f5572b917edea03161ca023f6c29a4c0',
+          }
+          for name, digest in expected.items():
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              if actual != digest:
+                  raise SystemExit(f'sha256 mismatch for {name}: {actual}')
+          PY
       - name: Unsafe dynamic execution scan
         run: >-
           ! grep -RInE --include='*.py'
