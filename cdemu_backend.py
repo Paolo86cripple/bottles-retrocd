@@ -129,6 +129,26 @@ class CDEmuBackend:
         value = self.proxy.GetDaemonInterfaceVersion2()
         return int(value[0]), int(value[1])
 
+    def daemon_identity(self) -> str:
+        """Return a per-daemon identity suitable for ownership journaling.
+
+        The D-Bus bus GUID changes when the bus is recreated, and the proxy's
+        unique name owner changes when the CDEmu daemon process is replaced.
+        Combining both prevents a journal from being applied to a later daemon
+        that merely happens to expose the same well-known bus name.
+        """
+        if self.bus is None or self.proxy is None:
+            raise RuntimeError("CDEmu non connesso: identità daemon non disponibile.")
+        try:
+            guid = str(self.bus.get_guid() or "")
+            owner = str(self.proxy.get_name_owner() or "")
+        except Exception as exc:
+            raise RuntimeError(f"Impossibile leggere l'identità D-Bus di CDEmu: {exc}") from exc
+        if not guid or not owner:
+            raise RuntimeError("Identità D-Bus CDEmu incompleta: GUID/name-owner assente.")
+        bus_kind = "system" if self.use_system_bus else "session"
+        return f"{bus_kind}:{guid}:{owner}"
+
     def number_of_devices(self) -> int:
         return int(self.proxy.GetNumberOfDevices())
 
@@ -172,15 +192,29 @@ class CDEmuBackend:
         self.proxy.DeviceUnload("(i)", index)
 
     def add_device(self) -> int:
+        """Append exactly one CDEmu device or fail closed on count drift.
+
+        Upstream AddDevice is synchronous and appends a device.  The previous
+        implementation accepted any count increase and returned ``current-1``;
+        a concurrent external client could therefore make us adopt the wrong
+        last device.  Require the only safe transition N -> N+1 instead.
+        """
         before = self.number_of_devices()
         self.proxy.AddDevice()
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             current = self.number_of_devices()
-            if current > before:
-                return current - 1
-            time.sleep(0.1)
-        raise RuntimeError("CDEmu non ha creato il drive temporaneo entro 5 secondi.")
+            if current == before + 1:
+                return before
+            if current != before:
+                raise RuntimeError(
+                    "CDEmu device count cambiato in modo ambiguo durante AddDevice: "
+                    f"{before} → {current}; il nuovo drive non viene rivendicato da RetroCD."
+                )
+            time.sleep(0.05)
+        raise RuntimeError(
+            f"CDEmu non ha completato la transizione AddDevice {before}→{before + 1} entro 5 secondi."
+        )
 
     def remove_last_device(self) -> None:
         self.proxy.RemoveDevice()
