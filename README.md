@@ -78,6 +78,8 @@ Before launch, **Test gamepad** compares the host controller surface with the ja
 
 After Bottles starts, a host-side RetroCD monitor watches only the identity of supported gamepad nodes. The initial activation is deliberately non-destructive and does not synthesize a udev event because Wine starts with the already-present static Bubblejail joystick surface; the log reports `udev=initial-static`. On a real disconnect/reconnect, RetroCD rebuilds only the exact current `jsX/eventX` surface, binds the matching minimal sysfs subtree, and emits matching libudev remove/add notifications inside Bubblejail's network namespace so Wine/winebus can observe the change; successful physical changes report `udev=notified`.
 
+The namespace broker does not require host privilege elevation. It discovers the user namespace that owns Bubblejail's mount namespace with Linux `NS_GET_USERNS`, prepares detached exact-node mounts in a private staging mount namespace, revalidates pinned device/sysfs object identity, and only then enters the running Bubblejail mount/network namespaces.
+
 The implementation fails closed. If namespace entry, exact sysfs reconstruction, udev notification or post-change jail probing cannot be proven, RetroCD reports `[FAIL] Gamepad hotplug` rather than widening device access. Device numbers may change after reconnect; the security invariant is exact agreement with the controller nodes currently detected on the host, not a fixed `event24` number.
 
 Switch/gyro paths that require hidraw are deliberately out of scope for 0.4.0.
@@ -132,12 +134,11 @@ The 0.4.0 candidate has been validated on the target CachyOS system for:
 - static bridge and live multidisc swaps;
 - Discworld Noir three-disc Redump set;
 - Discworld Noir with `proton-cachyos-native` + D7VK: native Wayland works, while XWayland enters fullscreen directly;
-- Xbox One S controller static Bubblejail path: only `js0` + matching `event24` visible, readable/writable, no unrelated input nodes, no `hidraw`, and inputs responding;
+- Xbox One S controller static Bubblejail path: only the current `jsX` + matching `eventX` visible, readable/writable, no unrelated input nodes, no `hidraw`, and inputs responding;
+- Xbox One S physical hotplug on a running Bottles instance: initial `event9 + js0` PASS with `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`; disconnect PASS with no gamepad nodes and `udev=notified`; reconnect without restarting Bottles PASS with `event9 + js0`, `sysfs=exact`, `udev=notified`, `hidraw=hidden`;
 - verifier/source immutability and lifecycle/update negative paths.
 
-The exact-node gamepad hotplug/sysfs/udev path is implemented and covered by automated tests but still requires its final physical disconnect/reconnect validation on the target machine before merge.
-
-Current CI regression suite: **146 unit tests PASS** on the gamepad hotplug implementation. CI also compiles every Python module including the display/gamepad wrappers and namespace helper, treats `ResourceWarning` as an error, checks shell syntax and scans for unsafe dynamic execution patterns.
+Current CI regression suite: **151 unit tests PASS** on the gamepad hotplug implementation. CI also compiles every Python module including the display/gamepad wrappers, namespace entry helper and namespace mount/udev helper, treats `ResourceWarning` as an error, checks shell syntax and scans for unsafe dynamic execution patterns.
 
 ## Run locally
 
@@ -171,7 +172,7 @@ python verifier_cli.py update tosec
 
 The GTK controller, verifier, CDEmu daemon and libMirage run on the host as the logged-in user. Bubblejail protects **Bottles/Wine**, not these host-side components. Consequently all host-side parsing paths are written fail-closed and archive inputs are treated as untrusted data.
 
-The gamepad hotplug monitor/helper is part of the host-side controller. It enters only the namespaces of the already-running `Bottles` Bubblejail instance and passes only validated gamepad device/sysfs references; it does not create a persistent broad device share.
+The gamepad hotplug monitor/helpers are part of the host-side controller. They target only the namespaces of the already-running `Bottles` Bubblejail instance and pass only validated gamepad device/sysfs references; they do not create a persistent broad device share or require privilege elevation.
 
 Persistent `[network]` in `services.toml` is rejected. The GUI only enables Bottles networking transiently for the selected launch. The verifier updater has its own narrower HTTPS/official-host policy.
 
