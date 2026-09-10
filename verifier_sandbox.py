@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Dedicated bubblewrap boundary for archive verification and protection scans.
 
-The game sandbox is intentionally not involved here.  This module launches a
+The game sandbox is intentionally not involved here. This module launches a
 small verifier worker in a separate bubblewrap sandbox with:
 
 - no host network namespace;
@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,12 +43,20 @@ class SandboxResponse:
 
 
 def _private_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
     try:
+        path.mkdir(parents=True, exist_ok=True)
         os.chmod(path, 0o700)
-    except OSError:
-        pass
-    return path
+        resolved = path.resolve(strict=True)
+        info = resolved.stat()
+    except OSError as exc:
+        raise VerifierSandboxError(f"Cache verifier privata non preparabile: {path}: {exc}") from exc
+    if not resolved.is_dir():
+        raise VerifierSandboxError(f"Cache verifier non è una directory: {resolved}")
+    if info.st_uid != os.getuid():
+        raise VerifierSandboxError(f"Cache verifier non appartiene all'utente corrente: {resolved}")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise VerifierSandboxError(f"Cache verifier non privata (richiesto 0700): {resolved}")
+    return resolved
 
 
 def _canonical_archive(root: Path) -> Path:
@@ -77,6 +86,32 @@ def _canonical_inputs(paths: Iterable[Path], root: Path) -> tuple[Path, ...]:
     return tuple(result)
 
 
+def _overlaps(left: Path, right: Path) -> bool:
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
+
+
+def _validate_mount_layout(*, archive: Path, app_dir: Path, data_dir: Path, cache_dir: Path) -> None:
+    """Ensure the sole RW bind cannot punch a writable hole into trusted/RO trees."""
+    protected = {
+        "archivio": archive,
+        "codice applicazione": app_dir,
+        "catalogo verifier": data_dir,
+    }
+    for label, path in protected.items():
+        if _overlaps(cache_dir, path):
+            raise VerifierSandboxError(
+                f"Layout verifier rifiutato: cache RW sovrapposta a {label} ({cache_dir} ↔ {path})."
+            )
+    if _overlaps(archive, app_dir):
+        raise VerifierSandboxError(
+            f"Layout verifier rifiutato: archivio e codice applicazione si sovrappongono ({archive} ↔ {app_dir})."
+        )
+    if _overlaps(archive, data_dir):
+        raise VerifierSandboxError(
+            f"Layout verifier rifiutato: archivio e catalogo verifier si sovrappongono ({archive} ↔ {data_dir})."
+        )
+
+
 def _sandbox_command(
     root: Path,
     *,
@@ -104,19 +139,16 @@ def _sandbox_command(
         "--tmpfs", "/tmp",
     ]
 
-    # Installed code is already covered by the /usr RO mount.  Development
+    # Installed code is already covered by the /usr RO mount. Development
     # checkouts live elsewhere and receive one exact read-only bind.
-    try:
-        app_in_usr = app_dir.is_relative_to(Path("/usr"))
-    except ValueError:
-        app_in_usr = False
+    app_in_usr = app_dir.is_relative_to(Path("/usr"))
     if not app_in_usr:
         args.extend(("--ro-bind", str(app_dir), str(app_dir)))
 
     args.extend(("--ro-bind", str(root), str(root)))
 
     # The catalog is trusted application state for read operations and never
-    # needs to be writable in this worker.  An absent catalog is represented by
+    # needs to be writable in this worker. An absent catalog is represented by
     # an absent bind and correctly yields NO_INDEX.
     if data_dir.is_dir():
         args.extend(("--ro-bind", str(data_dir), str(data_dir)))
@@ -147,6 +179,21 @@ def _sandbox_command(
     return tuple(args)
 
 
+def _trusted_bwrap(path: str) -> str:
+    try:
+        resolved = Path(path).resolve(strict=True)
+        info = resolved.stat()
+    except OSError as exc:
+        raise VerifierSandboxError(f"Eseguibile bwrap non verificabile: {path}: {exc}") from exc
+    if not stat.S_ISREG(info.st_mode) or not os.access(resolved, os.X_OK):
+        raise VerifierSandboxError(f"Eseguibile bwrap non valido: {resolved}")
+    if info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:
+        raise VerifierSandboxError(
+            f"Eseguibile bwrap non trusted: {resolved} deve essere root-owned e non scrivibile da group/other."
+        )
+    return str(resolved)
+
+
 class VerifierSandbox:
     """Client for read-only archive operations executed in the worker sandbox."""
 
@@ -160,7 +207,7 @@ class VerifierSandbox:
                 "Sandbox verifier non disponibile: manca 'bwrap' (pacchetto bubblewrap). "
                 "La verifica viene rifiutata invece di eseguire parser di immagini sul processo host."
             )
-        return str(Path(path).resolve(strict=True))
+        return _trusted_bwrap(path)
 
     def run(
         self,
@@ -177,7 +224,23 @@ class VerifierSandbox:
         inputs = _canonical_inputs(paths, archive)
         app_dir = Path(__file__).resolve(strict=True).parent
         data_dir = verifier_data_dir().expanduser().resolve(strict=False)
-        cache_dir = _private_dir(verifier_cache_dir().expanduser().resolve(strict=False))
+        cache_candidate = verifier_cache_dir().expanduser().resolve(strict=False)
+
+        # Validate before mkdir/chmod so even a hostile/custom XDG_CACHE_HOME
+        # cannot make the launcher create a directory inside the archive.
+        _validate_mount_layout(
+            archive=archive,
+            app_dir=app_dir,
+            data_dir=data_dir,
+            cache_dir=cache_candidate,
+        )
+        cache_dir = _private_dir(cache_candidate)
+        _validate_mount_layout(
+            archive=archive,
+            app_dir=app_dir,
+            data_dir=data_dir,
+            cache_dir=cache_dir,
+        )
 
         command = _sandbox_command(
             archive,
@@ -226,7 +289,7 @@ class VerifierSandbox:
             )
 
         if not isinstance(payload, dict) or payload.get("ok") is not True:
-            raise VerifierSandboxError("Verifier sandbox: risposta worker non valida o non autenticabile.")
+            raise VerifierSandboxError("Verifier sandbox: risposta worker non valida.")
 
         text = payload.get("text")
         status = payload.get("status")
