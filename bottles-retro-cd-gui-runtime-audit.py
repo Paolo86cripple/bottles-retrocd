@@ -19,6 +19,7 @@ from runtime_bus_audit import (  # noqa: E402
     format_runtime_bus_audit,
     parse_runtime_bus_audit_output,
 )
+from runtime_proxy_policy import format_proxy_policy, inspect_proxy_policy  # noqa: E402
 from runtime_surface_audit import (  # noqa: E402
     bubblejail_runtime_audit_invocation,
     format_runtime_audit,
@@ -37,8 +38,8 @@ class Window(_hard.Window):
     def _install_runtime_audit_button(self) -> None:
         self.runtime_audit_btn = Gtk.Button(label="Analizza runtime sandbox")
         self.runtime_audit_btn.set_tooltip_text(
-            "Elenca in sola lettura D-Bus, socket UNIX, runtime e device visibili nella jail già avviata. "
-            "Il test non modifica la policy Bubblejail."
+            "Elenca in sola lettura D-Bus, socket UNIX, runtime, device e policy effettiva del proxy D-Bus "
+            "della jail già avviata. Il test non modifica la policy Bubblejail."
         )
         self.runtime_audit_btn.connect(
             "clicked", lambda *_: self.background(self.run_runtime_surface_audit, report=True)
@@ -79,17 +80,6 @@ class Window(_hard.Window):
         finally:
             self.cdemu_ownership.release_session_lock()
 
-    def _host_dconf_profile_line(self) -> str:
-        cfg = self.sandbox.config()
-        portal = cfg.get("xdg_desktop_portal") or {}
-        if not isinstance(portal, dict):
-            return "[HOST-PROFILE] xdg_desktop_portal: configurazione non valida"
-        enabled = bool(portal.get("dconf_dbus", False))
-        return (
-            "[HOST-PROFILE] xdg_desktop_portal.dconf_dbus="
-            + ("true" if enabled else "false")
-        )
-
     def run_runtime_surface_audit(self) -> str:
         if not self.sandbox.running():
             raise RuntimeError(
@@ -109,12 +99,17 @@ class Window(_hard.Window):
             )
         bus_report = parse_runtime_bus_audit_output(bus_proc.stdout)
 
+        # Host-side and read-only: inspect only the policy flags on the exact
+        # xdg-dbus-proxy process serving this Bubblejail instance. This avoids
+        # inferring broad permissions from one successful D-Bus method call.
+        proxy_report = inspect_proxy_policy(INSTANCE, self.sandbox.config())
+
         return (
             format_runtime_audit(report)
             + "\n\n"
             + format_runtime_bus_audit(bus_report)
             + "\n\n"
-            + self._host_dconf_profile_line()
+            + format_proxy_policy(proxy_report)
         )
 
     def set_busy(self, busy: bool):
