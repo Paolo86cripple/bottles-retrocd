@@ -43,6 +43,8 @@ jobs:
           verifier_common.py
           verifier_hash.py
           verifier_sandbox.py
+          verifier_updater_sandbox.py
+          verifier_updater_worker.py
           verifier_updates.py
           verifier_worker.py
       - name: Unit tests
