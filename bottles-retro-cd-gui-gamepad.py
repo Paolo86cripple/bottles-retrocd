@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 from pathlib import Path
 
 LIFECYCLE_GUI = Path(__file__).with_name("bottles-retro-cd-gui-lifecycle.py")
@@ -129,6 +130,49 @@ class Window(_life.Window):
         if sandbox_scroller is None:
             raise RuntimeError("Pagina Sandbox non trovata nel notebook dopo lo scroll globale.")
         self.sandbox_scroller = sandbox_scroller
+
+    @staticmethod
+    def _integration_sentinel_labels(text: str) -> str:
+        return (
+            text.replace("Data/progetti nascosta", "sentinel host integrazione #1 nascosta")
+            .replace("Data/SteamLibrary nascosta", "sentinel host integrazione #2 nascosta")
+        )
+
+    def run_integration_test(self):
+        """Run the reviewed CD test against real, temporary non-whitelist paths.
+
+        The preserved base test already checks two DATA_ROOT children from inside
+        the same Bubblejail invocation used for optical injection. Point those
+        checks at a freshly-created sibling of the configured archive so a PASS
+        proves that real host objects are hidden rather than merely proving that
+        hard-coded paths happen not to exist.
+        """
+        base = _life._ext._base
+        original_data_root = base.DATA_ROOT
+        archive_parent = self._archive_root.parent
+
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix=".bottles-retro-integration-",
+                dir=archive_parent,
+            ) as temp_dir:
+                sentinel_root = Path(temp_dir)
+                (sentinel_root / "progetti").mkdir()
+                (sentinel_root / "SteamLibrary").mkdir()
+                base.DATA_ROOT = sentinel_root
+                try:
+                    result = super().run_integration_test()
+                except RuntimeError as exc:
+                    raise RuntimeError(
+                        self._integration_sentinel_labels(str(exc))
+                    ) from exc
+                return self._integration_sentinel_labels(str(result))
+        except OSError as exc:
+            raise RuntimeError(
+                f"Impossibile creare le sentinel host temporanee per il test CD → Bubblejail: {exc}"
+            ) from exc
+        finally:
+            base.DATA_ROOT = original_data_root
 
     def refresh_gamepad_status(self):
         status = getattr(self, "gamepad_status", None)
