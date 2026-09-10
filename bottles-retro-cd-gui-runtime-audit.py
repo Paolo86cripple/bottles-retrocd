@@ -86,11 +86,11 @@ class Window(_hard.Window):
 
     def _host_dconf_profile_line(self) -> str:
         cfg = self.sandbox.config()
-        portal = cfg.get("xdg_desktop_portal") or {}
-        if not isinstance(portal, dict):
-            return "[HOST-PROFILE] xdg_desktop_portal: configurazione non valida"
-        enabled = bool(portal.get("dconf_dbus", False))
-        return f"[HOST-PROFILE] xdg_desktop_portal.dconf_dbus={'true' if enabled else 'false'}"
+        common = cfg.get("common") or {}
+        if not isinstance(common, dict):
+            return "[HOST-PROFILE] common: configurazione non valida"
+        enabled = bool(common.get("dconf_dbus", False))
+        return f"[HOST-PROFILE] common.dconf_dbus={'true' if enabled else 'false'}"
 
     def run_runtime_surface_audit(self) -> str:
         if not self.sandbox.running():
