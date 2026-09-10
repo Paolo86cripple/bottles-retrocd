@@ -1,19 +1,19 @@
 # Bottles RetroCD — Project Rules and Working Context
 
-This file is the persistent project contract for humans and coding agents working on **Bottles RetroCD**. Read it before non-trivial work and keep it aligned with implementation, tests, packaging, release documentation and validated target behavior.
+This file is the persistent operational contract for humans and coding agents working on **Bottles RetroCD**. Read it before non-trivial work and keep it aligned with implementation, tests, packaging, release documentation and validated target behavior.
 
 ## Agent operating rules
 
 - The user's interactive shell is **fish**. Any terminal command intended for the user to paste must use valid fish syntax by default. Use `set VAR value`, not Bash-style `VAR=value`. Use Bash/sh syntax only when explicitly requested or when editing/testing a script whose declared interpreter is Bash/sh.
-- Treat `AGENTS.md` as the repository's persistent operational source of truth for durable project decisions, constraints, validation state, workflow, packaging and roadmap.
-- Whenever a durable project instruction, architecture/security decision, release gate, validated behavior, packaging decision or roadmap decision is established, update `AGENTS.md` as part of the same repository work when access allows it.
+- Treat `AGENTS.md` as the repository's persistent source of truth for durable project decisions, constraints, validation state, workflow, packaging and roadmap.
+- Update `AGENTS.md` whenever a durable project instruction, architecture/security decision, release gate, validated behavior, packaging decision or roadmap decision changes.
 - Keep implementation, tests, `AGENTS.md`, README/review/testing docs, packaging metadata and changelog mutually consistent. Investigate divergence rather than assuming one side is current.
-- Do not copy hidden platform/system instructions into the repository. Record only user/project instructions and repository-relevant engineering context.
-- Prefer focused changes over speculative refactors, especially near packaging/release.
-- Once a security-sensitive runtime path is CI-green and target-validated, do not refactor it for aesthetics immediately before release. Defer low-value cleanup unless it fixes a concrete risk/regression.
+- Do not copy hidden platform/system instructions into the repository.
+- Prefer focused changes over speculative refactors, especially around security-sensitive paths and stable releases.
+- Once a security-sensitive runtime path is CI-green and target-validated, do not refactor it for aesthetics without a concrete reason and relevant regression testing.
 - Never force-update `main` merely to simplify history.
-- Do not merge packaging/release work merely because CI passes if required real-machine gates are still open.
-- No automatic merge. Owner approval is required before merging packaging/release work.
+- Packaging/release work still requires real-machine gates where specified; CI alone is not sufficient.
+- No automatic merge. Owner approval is required before merging non-trivial packaging/release/security-sensitive work.
 
 ## Mission and scope
 
@@ -29,9 +29,9 @@ In scope:
 - Redump/TOSEC verification and read-only protection scanning;
 - standard gamepad support with exact-node isolation and runtime disconnect/reconnect;
 - persistent configuration and diagnostics that positively prove sandbox behavior;
-- Arch/CachyOS packaging of the validated application.
+- Arch/CachyOS packaging and release distribution.
 
-Out of scope unless a future concrete requirement changes the decision: DOS management (use DOSBox-Staging), ScummVM integration, console emulation, Steam management, or revival of a generic all-era PC Game Manager. Useful concepts carried from the retired manager are GPU selection, multidisc, Redump/TOSEC verification and persistent configuration.
+Out of scope unless a future concrete requirement changes the decision: DOS management (use DOSBox-Staging), ScummVM integration, console emulation, Steam management, or revival of a generic all-era PC Game Manager.
 
 ## Preservation / compatibility philosophy
 
@@ -41,24 +41,22 @@ Out of scope unless a future concrete requirement changes the decision: DOS mana
 - Study/reuse existing open-source projects where technically appropriate and license-compatible instead of reinventing solved components.
 - Compatibility layers remain optional where possible and must not weaken Bubblejail merely for convenience.
 
-## Release identity and current phase
+## Released baseline: 0.4.0
 
 - Stable app ID: `io.github.Paolo86cripple.BottlesRetroCD`.
 - Stable release name/version: `Bottles RetroCD 0.4.0`.
-- Runtime security/compatibility baseline merged by PR #3: `8c75163168164fef896041c6b1a62ddac19b3faf`; post-merge CI #339 SUCCESS.
-- Final real-machine pre-packaging gate: PASS.
-- Final PR #3 diff/security review: PASS; no runtime/security blocker found.
-- Packaging branch: `packaging/arch-cachyos-0.4.0`, created from the reviewed runtime merge commit.
-- 0.4.0 runtime feature scope is frozen. Do not add runtime features before release.
-- Full Arch/CachyOS package acceptance for `bottles-retrocd 0.4.0-2`: PASS.
-- Final release review found one identity-only mismatch in the final wrapper: legacy `APP_ID=org.local.BottlesRetroCD`, `APP_NAME=Bottles Retro CD`, `VERSION=0.4.0-rc2` were still inherited while package/Desktop/AppStream already used the stable release identity.
-- Identity-only fix commit: `122460692d0c19650d663a77288b1c489851cd44`. It changes only the final wrapper's published app ID/name/version; Bubblejail, GPU, optical, network, gamepad, verifier, archive and process-isolation logic are unchanged.
-- Because installed payload changed after `0.4.0-2`, final package candidate is **`bottles-retrocd 0.4.0-3`**.
-- Package source is pinned to the identity-fix commit above; `.SRCINFO` is tracked and synchronized with `PKGBUILD`.
-- Narrow 0.4.0-3 target gate: **PASS** on 2026-09-10. Clean package build completed with 151/151 tests, upgrade from 0.4.0-2 succeeded, `pacman -Qkk` reported 53 files and 0 altered files, and effective GTK/D-Bus application ID was verified as `io.github.Paolo86cripple.BottlesRetroCD`.
-- All required packaging/release validation gates before merge are PASS.
-- The owner authorized merge after the final review and narrow 0.4.0-3 gate passed.
-- After merge, verify `main` CI before creating the `0.4.0` tag/release.
+- Runtime security/compatibility baseline merged by PR #3: `8c75163168164fef896041c6b1a62ddac19b3faf`.
+- Final packaging/release PR #4 merged to `main` as `15b1e0acc61d61978051d49d97bd17cb97efb348`.
+- Post-merge `main` CI: PASS.
+- Annotated tag **`0.4.0`** was published on 2026-09-10 and verified to dereference exactly to merge commit `15b1e0acc61d61978051d49d97bd17cb97efb348`.
+- Treat the published `0.4.0` tag as immutable. Do not move or retag it; fixes require a new version/tag.
+- Final Arch/CachyOS package is **`bottles-retrocd 0.4.0-3`**.
+- Package source is pinned to identity-fix commit `122460692d0c19650d663a77288b1c489851cd44`; its only runtime-code delta from the fully validated baseline is the final wrapper's stable app ID/name/version override.
+- `.SRCINFO` is tracked and synchronized with `PKGBUILD`.
+- Full pre-release security/compatibility gates plus package acceptance and uninstall-preservation are PASS.
+- Narrow 0.4.0-3 identity/package gate is PASS: clean package build with 151/151 tests, upgrade from 0.4.0-2, `pacman -Qkk` 53 files/0 altered, stable GUI identity and GTK/D-Bus application ID verified.
+- 0.4.0 is now a frozen release baseline except for narrowly scoped maintenance/security fixes.
+- Distribution target for the GitHub Release: attach `bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zst` plus a SHA256 checksum. The package is the intended Arch/CachyOS binary artifact for this release.
 
 ## Architectural baseline
 
@@ -70,8 +68,8 @@ Out of scope unless a future concrete requirement changes the decision: DOS mana
 - CDEmu is controlled through its D-Bus API model; `cdemu-client` is optional.
 - UDisks2 mount state must be verified, not inferred from command success.
 - Archive root is explicit persistent configuration; no release-time user-specific storage path may be hardcoded.
-- Local-tree entrypoint remains `run-local.sh`; installed entrypoint is `/usr/bin/bottles-retrocd`, which delegates to `/usr/lib/bottles-retrocd/run-local.sh`.
-- The final gamepad wrapper is the authoritative application entrypoint and publishes `io.github.Paolo86cripple.BottlesRetroCD`, `Bottles RetroCD`, `0.4.0`; legacy base constants are implementation details and must not leak into released identity.
+- Local-tree entrypoint remains `run-local.sh`; installed entrypoint is `/usr/bin/bottles-retrocd`, delegating to `/usr/lib/bottles-retrocd/run-local.sh`.
+- The final gamepad wrapper is the authoritative application entrypoint and publishes `io.github.Paolo86cripple.BottlesRetroCD`, `Bottles RetroCD`, `0.4.0`.
 
 ## Security invariants
 
@@ -94,9 +92,9 @@ Security regressions are release blockers.
 - Config path: `~/.config/bottles-retro-cd/` mode `0700`.
 - Sensitive files such as `config.toml`/`disc-sets.toml`: `0600`.
 - Schema 2 persists `gpu_pci`, `display_backend`, `archive_root`.
-- Existing target installs may migrate the historical archive path only if it exists; migration stores only the path and never moves/copies/renames/rewrites/touches archive data.
+- Historical archive-path migration stores only the path when it exists and never moves/copies/renames/rewrites/touches archive data.
 - New installs choose archive explicitly.
-- Config writes remain syntax-safe/atomic where applicable; persist stable identifiers, not volatile kernel numbering.
+- Persist stable identifiers, not volatile kernel numbering.
 
 ### Network
 
@@ -105,7 +103,7 @@ Security regressions are release blockers.
 - Network may be enabled only transiently for a selected launch.
 - Do not make network persistent merely to download runners.
 - Runner workflow: temporary network ON for download/install, fully close Bottles, reopen OFF and confirm persistence in private HOME.
-- Verifier update networking is independent: HTTPS only to explicit official Redump/TOSEC hosts with redirect revalidation.
+- Verifier updater networking is independent: HTTPS only to explicit official Redump/TOSEC hosts with redirect revalidation.
 
 ### Display / preferences
 
@@ -122,11 +120,10 @@ Security regressions are release blockers.
 - Validate PCI/vendor/device/driver plus DRM `cardN` and `renderD*`; selected paths must be live character devices.
 - Apply Mesa GPU selection per launch; do not rewrite persistent Bubblejail policy merely to switch GPU.
 - Mask broad `/dev/dri` and bind back only selected card/render nodes.
-- Pre-launch proof: `DRI_PRIME`, selected nodes present, known non-selected nodes absent, exactly one Vulkan device, matching vendor/device identity.
-- Post-launch proof attaches to already-running Bubblejail via supported `bubblejail run --wait <instance> ...` path and re-proves effective selected-node/Vulkan isolation.
-- Missing proof markers are failure. Post-launch proof failure terminates the exact launch process group.
+- Pre-launch proof requires selected nodes, absence of known non-selected nodes, exactly one Vulkan device and matching vendor/device identity.
+- Post-launch proof attaches to the already-running Bubblejail and re-proves effective isolation.
+- Missing proof markers are failure; post-launch proof failure terminates the exact launch process group.
 - Manual Test Vulkan uses the same strict validator.
-- Do not hide additional GPU sysfs without concrete security value; avoid Mesa/udev compatibility regressions.
 
 ### Retro Optical / CDEmu
 
@@ -135,23 +132,22 @@ Security regressions are release blockers.
 - `/dev/sgX` is broader SCSI access, explicit and OFF by default.
 - CDEmu D-Bus and `/dev/vhba_ctl` stay hidden from Bottles/Wine.
 - No broad storage-tree exposure for optical compatibility.
-- Lifecycle detects effective VHBA provider, including CachyOS kernel-provided VHBA, and must not duplicate privileged/kernel infrastructure.
+- Lifecycle detects the effective VHBA provider, including CachyOS kernel-provided VHBA, and must not duplicate privileged/kernel infrastructure.
 - During a live Bottles session, broad “eject all” operations are intentionally refused; use the validated active-device eject path.
 
 ### Standard gamepad / input
 
 - Standard controller path uses Bubblejail `[joystick]`.
-- Never expose all `/dev/input`, keyboard/mouse event nodes, or `/dev/hidraw*` for the 0.4.0 standard path.
-- Switch/gyro/hidraw-dependent support is out of scope for 0.4.0 rather than a reason to weaken isolation.
+- Never expose all `/dev/input`, keyboard/mouse event nodes, or `/dev/hidraw*` for the standard path.
+- Switch/gyro/hidraw-dependent support is out of scope rather than a reason to weaken isolation.
 - Host detection accepts supported `jsX` plus matching evdev `eventX`; node numbers may change across reconnect.
 - Test gamepad proves exact host/jail agreement, readability, no unrelated input, no hidraw.
 - Runtime fingerprint includes path/inode/rdev.
-- Initial monitor activation preserves the known-good static surface, reports `udev=initial-static`, and sends no unnecessary initial add event.
+- Initial monitor activation preserves known-good static surface and reports `udev=initial-static` without unnecessary synthetic add.
 - Physical disconnect/reconnect reconciles exact current `jsX/eventX` plus minimal sysfs and sends synthetic libudev remove/add, reporting `udev=notified`.
 - Every transition re-probes `sysfs=exact` and `hidraw=hidden`; ambiguity/failure is fail-closed with no permissive fallback.
 - No sudo/root/additional groups/persistent udev permission changes/host capabilities for normal hotplug.
-- Runtime hotplug routes through `gamepad_ns_entry.py`: `NS_GET_USERNS` finds mount-namespace owner; exact host objects are pinned; a private staging mount namespace is created; `(st_dev, st_ino, type, st_rdev)` is revalidated; detached exact mounts use `open_tree`; target mount/network namespaces are entered only after preparation. No PID namespace dependency.
-- Some legacy games enumerate controllers only at startup; RetroCD proves Wine-visible transition but cannot force game-level runtime enumeration.
+- Runtime hotplug routes through `gamepad_ns_entry.py`: `NS_GET_USERNS` discovers the mount-namespace owner; exact host objects are pinned; a private staging mount namespace is created; `(st_dev, st_ino, type, st_rdev)` is revalidated; detached exact mounts use `open_tree`; target mount/network namespaces are entered only after preparation. No PID namespace dependency.
 
 ## Multidisc rules
 
@@ -164,155 +160,81 @@ Security regressions are release blockers.
 - During swap neutralize `/mnt/cdemu` to a real empty private directory, keep the same validated active `/dev/srX`, fail closed/rollback on mapping change.
 - Revalidate cache device count/order/mapping before cleanup; refuse ambiguous removal during external CDEmu activity.
 - Lock active drive/freeze set editing during live multidisc; poll Bottles exit and clean caches automatically; refuse normal GUI close while live Bottles depends on cache.
-- Log cleanup start/completion/failure for live multidisc ownership and recovery diagnostics.
-- Known residual: abnormal GUI/process kill may leave temporary cache drives; recovery is post-release and must not weaken ownership validation.
+- Known residual: abnormal GUI/process kill may leave temporary cache drives; safe recovery is post-release work and must not weaken ownership validation.
 
 ## Redump / TOSEC verifier rules
 
-- Verifier is implemented and baseline; never mount/execute/rename/rewrite/move/copy/touch dump files.
-- Resolve/canonicalize CUE/TOC below authorized archive; reject traversal, absolute POSIX, Windows drive-letter and UNC references; preserve filenames/structure.
-- Hash CRC32/MD5/SHA1 in one streaming pass; stat before/after; cache identity includes device/inode/size/mtime/ctime under XDG cache; close SQLite explicitly.
-- Parse Logiqx incrementally; preserve source/DAT/game/description/serial/version/protection metadata; ignore unusable ROM records.
+- Verifier is host-side but read-only with respect to archive material; never mount/execute/rename/rewrite/move/copy/touch dump files.
+- Canonicalize CUE/TOC references below authorized archive and reject traversal/absolute/Windows/UNC escapes.
+- Hash CRC32/MD5/SHA1 in one streaming pass; stat before/after; cache identity includes device/inode/size/mtime/ctime under XDG cache.
+- Parse Logiqx incrementally; retain source/DAT/game/description/serial/version/protection metadata.
 - Build catalog in staging, run SQLite integrity checks, reject empty/unverifiable indexes.
 - `MATCH 1:1` requires one complete unique game; partial is `MISMATCH`; equivalent complete records remain `AMBIGUOUS`.
-- Official updater is HTTPS-only with explicit host allow-list, redirect revalidation, no embedded credentials; bound download/ZIP sizes/counts; reject traversal/symlinks; materialize only DAT/XML; stage/index before swap and rollback on any replacement failure.
-- Manual DAT imports remain in a separate source namespace from official catalog updates.
-- Protection scanner is read-only, bounded, keeps the 64 MiB per-directory-extent limit, streams raw signatures with overlap, and remains heuristic evidence that never overrides cryptographic matching.
+- Official updater is HTTPS-only with explicit host allow-list, redirect revalidation, bounded download/ZIP sizes/counts, traversal/symlink rejection, staged indexing and rollback.
+- Manual DAT imports remain in a separate source namespace.
+- Protection scanner is read-only, bounded, keeps the 64 MiB per-directory-extent limit, streams raw signatures with overlap, and never overrides cryptographic matching.
 
 ## Coding practices
 
 - Prefer Python stdlib where practical.
 - Application subprocesses use argv lists; no `os.system`, `shell=True`, `eval` or dynamic `exec` in app paths.
 - Never interpolate user-controlled paths into unquoted shell commands.
-- If a shell snippet is unavoidable for a test, quote paths correctly and keep it narrowly scoped.
 - GTK widget access from workers is marshalled to the GTK main thread.
 - Bubblejail config writes are syntax-checked/backed up/atomic where applicable.
 - Detect Bubblejail runtime capabilities before depending on them.
 - Keep launch stdout/stderr in XDG cache/logs.
 - Do not hardcode user HOME/storage paths.
-- Favor fail-closed identity/mapping decisions; avoid hardening that creates substantial compatibility risk without concrete benefit.
+- Favor fail-closed identity/mapping decisions.
 
-## User-facing command examples
+## 0.4.0 validation record
 
-All interactive examples must paste cleanly into fish, e.g.:
-
-```fish
-set ARCHIVE "/path/to/archive"
-find "$ARCHIVE" -type f
-```
-
-For environment overrides use fish-compatible forms such as:
-
-```fish
-env PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests -v
-```
-
-Scripts keep their declared interpreter; Bash syntax is valid inside a Bash `PKGBUILD`, but user terminal instructions remain fish.
-
-## 0.4.0 validation baseline
-
-Automated/runtime baseline before packaging:
+Automated/runtime baseline:
 
 - 151 unit tests PASS;
-- all application modules compile, including final GUI/gamepad namespace helpers;
+- all application modules compile;
 - `ResourceWarning`-as-error PASS;
 - shell syntax PASS;
 - forbidden dynamic-execution scan PASS;
-- PR #3 branch CI and post-merge `main` CI #339 green;
+- PR #3 and PR #4 CI green;
+- post-merge `main` CI green;
 - final target security/compatibility gate PASS.
 
-Target behavior validated before packaging included:
+Target validation included:
 
 - both AMD GPU paths with pre/post DRM/Vulkan proof;
 - CDEmu/UDisks2 RO flow, optional exact raw `/dev/srX`, explicit `/dev/sgX`, multidisc cache/swap/cleanup;
-- Discworld Noir three-disc set, verifier/source immutability, preference persistence, native Wayland/XWayland, `proton-cachyos-native` + D7VK;
+- Discworld Noir three-disc set, verifier/source immutability, native Wayland/XWayland, `proton-cachyos-native` + D7VK;
 - network OFF baseline + temporary-network runner persistence;
 - Xbox One S exact static path and physical hotplug/reconnect;
-- schema-2 archive persistence + `0700`/`0600` config permissions + identical pre/post archive metadata signatures;
-- Test Bubblejail `PASS=17 FAIL=0 WARN=0` with real hidden sentinel;
-- Test CD → Bubblejail PASS with SCSI optical type 5, verified RO mount, hidden real sentinels and cleanup.
-
-## Full Arch/CachyOS package acceptance for 0.4.0-2 — PASS
-
-Completed on target CachyOS on 2026-09-10.
-
-- All declared package dependencies present.
-- `makepkg --cleanbuild --syncdeps` completed successfully.
-- Local packaging source hashes passed.
-- `check()` executed **151/151 tests PASS**.
-- `package()` and packaging issue checks completed successfully.
-- Package metadata/file-list inspection PASS; payload only under expected `/usr` paths.
-- Install script contains informational messages only and does not alter user state.
-- Installed package integrity: **53 total files, 0 altered files**.
-- Installed launcher resolved to `/usr/bin/bottles-retrocd` and successfully ran installed code under `/usr/lib/bottles-retrocd/`.
-- Test Bubblejail from installed package: **PASS=17 FAIL=0 WARN=0**.
-- Historical local package `bottles-retro-cd-gui 0.3.0-1` was removed cleanly with no package-file overlap beyond common system directories and no orphans; final metadata declares `conflicts`/`replaces`.
-- Installed-package functional launch PASS using Discworld Noir Disc 1 with XWayland, network OFF, dedicated RX 9070 XT selected, two other GPUs hidden, GPU pre/post PASS, Retro Optical pre/post PASS, `/mnt/cdemu=RO`, CDEmu D-Bus/vhba/sg hidden, raw sr hidden by default, Xbox One S `event9 + js0`, `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`.
-- Live-session broad eject was correctly refused fail-closed; active-device eject succeeded.
-- Uninstall-preservation gate PASS: before/after comparison showed RetroCD config, Bubblejail instance/private HOME/prefix state and archive content unchanged after removing the package.
-
-## Narrow final package gate for 0.4.0-3 — PASS
-
-Completed on target CachyOS on 2026-09-10 after the identity-only fix.
-
-- Final branch CI with identity and `.SRCINFO` checks: PASS.
-- Target `makepkg --cleanbuild --syncdeps`: PASS with **151/151 tests**.
-- Upgrade `bottles-retrocd 0.4.0-2` → `0.4.0-3`: PASS.
-- Pacman metadata: expected `0.4.0-3`, `conflicts=bottles-retro-cd-gui`, `replaces=bottles-retro-cd-gui`.
-- `pacman -Qkk bottles-retrocd`: **53 files, 0 altered files**.
-- Effective GTK/D-Bus application ID: **`io.github.Paolo86cripple.BottlesRetroCD`**.
-- Stable GUI identity: **`Bottles RetroCD 0.4.0`**.
-- No unrelated regression surfaced, so the already-passed GPU/Retro Optical/Discworld/gamepad/uninstall-preservation suite did not need repetition.
-
-## Deferred non-blocking cleanup
-
-Do not touch these before 0.4.0 release unless a concrete regression appears:
-
-1. `gamepad_ns_helper.py` still contains older direct CLI/`mutate_instance()` code; runtime hotplug uses `gamepad_ns_entry.py`. Old path failed closed and is not a permissive fallback.
-2. CD-integration real-sentinel staging exists in both lifecycle and final wrapper layers; redundant but restrictive and target-tested.
-3. After release, consider consolidating release identity constants into one shared module instead of overriding legacy base constants in the final wrapper. Do not refactor this immediately before 0.4.0 after the identity-only fix passed its narrow gate.
+- schema-2 archive persistence + config permissions + identical pre/post archive metadata signatures;
+- Test Bubblejail `PASS=17 FAIL=0 WARN=0`;
+- installed-package functional launch PASS with RX 9070 XT selected, two other GPUs hidden, Retro Optical pre/post PASS, `/mnt/cdemu=RO`, raw sr hidden by default and exact gamepad isolation;
+- live-session broad eject correctly refused; active-device eject succeeded;
+- uninstall-preservation PASS.
 
 ## Arch / CachyOS packaging contract
 
 Packaging layout:
 
-- `packaging/arch/PKGBUILD` — package recipe;
-- `packaging/arch/.SRCINFO` — generated package metadata, tracked and kept synchronized with `PKGBUILD`;
-- `/usr/lib/bottles-retrocd/` — installed application Python modules and internal `run-local.sh`;
-- `/usr/bin/bottles-retrocd` — tiny launcher only;
-- `/usr/share/applications/io.github.Paolo86cripple.BottlesRetroCD.desktop` — desktop entry;
-- `/usr/share/metainfo/io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml` — AppStream metadata;
-- `/usr/share/doc/bottles-retrocd/` and `/usr/share/licenses/bottles-retrocd/` — app-owned docs/license.
+- `packaging/arch/PKGBUILD`;
+- `packaging/arch/.SRCINFO`;
+- `/usr/lib/bottles-retrocd/` application payload;
+- `/usr/bin/bottles-retrocd` launcher;
+- desktop/AppStream metadata under `/usr/share`;
+- docs/licenses under app-owned `/usr/share` locations.
 
-Packaging source policy:
+Packaging policy:
 
-- 0.4.0 security/compatibility baseline remains `8c75163168164fef896041c6b1a62ddac19b3faf`.
-- Final packaged source is pinned to `122460692d0c19650d663a77288b1c489851cd44`, whose only runtime-code delta from the validated baseline is the final-wrapper application ID/name/version override; other intervening branch commits are packaging/CI/docs only.
-- Do not move the source pin again without a concrete reviewed reason and corresponding relevant validation.
-- Final package metadata is `pkgver=0.4.0`, `pkgrel=3`.
-- `conflicts=('bottles-retro-cd-gui')` and `replaces=('bottles-retro-cd-gui')` are intentional migration metadata for the obsolete historical local package name.
-- No files may be installed under `/home`, `/run`, `/mnt`, `/media`, `/dev`, `/sys`, or user config/data locations.
-- Package install/remove scripts must never create/reset/delete Bubblejail instances, private HOME, prefixes, RetroCD config, archive, DAT catalog/cache or other user-owned content.
-- Uninstall removes only package-owned files under `/usr`; user state is intentionally preserved.
-
-Verified dependency policy:
-
+- final package metadata is `pkgver=0.4.0`, `pkgrel=3`;
+- `conflicts=('bottles-retro-cd-gui')` and `replaces=('bottles-retro-cd-gui')` intentionally migrate the obsolete local package name;
+- no package-owned files under `/home`, `/run`, `/mnt`, `/media`, `/dev`, `/sys`, or user data/config locations;
+- install/remove scripts never create/reset/delete Bubblejail instances, private HOME, prefixes, RetroCD config, archive or verifier data;
+- uninstall removes only package-owned `/usr` files and preserves user state;
 - direct dependencies: `python`, `python-gobject`, `gtk4`, `bottles`, `bubblejail`, `cdemu-daemon`, `libmirage`, `udisks2`, `vulkan-tools`, `iproute2`, `util-linux`;
-- on stock Arch, `bottles` and `bubblejail` are AUR packages;
-- `lspci`/`pciutils` is optional diagnostic enrichment because GPU detection falls back safely to stable PCI identity when absent; it is not a hard runtime dependency;
-- do **not** add direct dependency on `vhba-module` or `vhba-module-dkms`; CDEmu/distribution/kernel must satisfy effective `VHBA-MODULE`;
-- do **not** add `cdemu-client` as hard dependency; RetroCD uses D-Bus directly;
-- `sudo` is optional and only enables interactive Componenti full-system update;
-- no separate/broad gamepad dependency or permissions layer beyond Bubblejail `[joystick]`.
-
-Packaging validation requirements:
-
-- CI validates runtime compile/tests plus `PKGBUILD`, `.install`, launcher syntax, desktop/metainfo, local hashes, final release identity and `.SRCINFO` metadata;
-- full target package build/file-list/installed/security/compatibility/uninstall-preservation acceptance is PASS for 0.4.0-2;
-- identity-only payload change to 0.4.0-3 passed its narrow target gate;
-- after any package-metadata change, regenerate `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` and rerun CI;
-- merge packaging branch only after final review, target gate PASS and owner approval;
-- after merge, verify `main` CI before creating the 0.4.0 tag/release.
+- do not hard-depend on `vhba-module`, `vhba-module-dkms` or `cdemu-client`;
+- `sudo` remains optional for the Componenti update action;
+- `lspci`/`pciutils` remains optional diagnostic enrichment;
+- regenerate `.SRCINFO` after packaging metadata changes and rerun CI.
 
 ## Git / release workflow
 
@@ -320,15 +242,22 @@ Packaging validation requirements:
 - Non-trivial work belongs on focused branches.
 - Keep commits focused; compare branch with `main` before merge; no force-updates.
 - Do not commit generated `src/`, `pkg/`, built package archives, caches, private instance state, mounted media, DAT downloads or user-specific paths.
-- Packaging branch is based on runtime merge commit `8c751631...`; the only runtime-code delta before release is the reviewed identity-only fix at `122460692...`.
-- Current release flow: authorized PR #4 merge → verify `main` CI → tag/release 0.4.0.
+- Published tags are immutable. `0.4.0` points to `15b1e0acc61d61978051d49d97bd17cb97efb348` and must never be moved.
+- GitHub Release 0.4.0 should use tag `0.4.0` and distribute the validated `bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zst` asset plus SHA256.
+- Future fixes/releases use new branches, version/package revisions and tags as appropriate; never rewrite the 0.4.0 release history.
 
 ## Post-release roadmap, agreed order
 
-1. **Native legacy optical DRM compatibility/emulation** — investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP optical protections; reproduce original verification behavior via Wine/CDEmu/libMirage or compatible components; reuse license-compatible open source; No-CD/cracks are not the normal solution; keep optional/fail-closed without broader sandbox permissions.
-2. **Legacy DirectX compatibility layer/manager** — DxWrapper/dgVoodoo2-style DirectX 5–9 support, optional/OFF by default, after DRM work and before shaders.
-3. **libRashader + Slang shaders** — optional/OFF by default per game/bottle after compatibility foundation is stable.
-4. **Abnormal-termination recovery for live multidisc cache devices** — safe recovery without weakening ownership validation.
+1. **Native legacy optical DRM compatibility/emulation — ACTIVE NEXT OBJECTIVE.** Investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP optical protections; reproduce original verification behavior via Wine/CDEmu/libMirage or compatible components; reuse license-compatible open source; No-CD/cracks are not the normal solution; keep optional/fail-closed without broader sandbox permissions.
+2. **Legacy DirectX compatibility layer/manager.** DxWrapper/dgVoodoo2-style DirectX 5–9 support, optional/OFF by default, after DRM work and before shaders.
+3. **libRashader + Slang shaders.** Optional/OFF by default per game/bottle after the compatibility foundation is stable.
+4. **Abnormal-termination recovery for live multidisc cache devices.** Recover safely without weakening device-ownership validation.
+
+Post-release maintenance backlog:
+
+- consolidate release identity constants into one shared module after focused regression review;
+- retire/remove the old direct `mutate_instance()` helper path if still unused;
+- consider deduplicating restrictive real-sentinel staging between lifecycle/final-wrapper layers.
 
 None of these may weaken the validated Bubblejail boundary or become mandatory without a concrete reviewed reason.
 
