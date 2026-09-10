@@ -33,10 +33,10 @@ class Window(_game.Window):
         return root
 
     def _install_verifier_sandbox_test(self) -> None:
-        self.verifier_sandbox_test_btn = Gtk.Button(label="Test sandbox verifier")
+        self.verifier_sandbox_test_btn = Gtk.Button(label="Test sandbox verifica")
         self.verifier_sandbox_test_btn.set_tooltip_text(
-            "Prova il boundary bwrap del verifier senza modificare i dump: archivio/codice/catalogo RO, "
-            "sola cache verifier RW, HOME host nascosta e rete host non condivisa."
+            "Prova l'isolamento bwrap della verifica senza modificare i dump: archivio/codice/catalogo RO, "
+            "sola cache di verifica RW, HOME host nascosta e rete host non condivisa."
         )
         self.verifier_sandbox_test_btn.connect(
             "clicked", lambda *_: self.background(self.test_verifier_sandbox, report=True)
@@ -45,7 +45,7 @@ class Window(_game.Window):
         if isinstance(parent, Gtk.Box):
             parent.append(self.verifier_sandbox_test_btn)
         else:
-            raise RuntimeError("Layout Verifica inatteso: impossibile inserire Test sandbox verifier.")
+            raise RuntimeError("Layout Verifica inatteso: impossibile inserire Test sandbox verifica.")
 
     def test_verifier_sandbox(self) -> str:
         result = self.verifier_sandbox.attest(self._verifier_root())
