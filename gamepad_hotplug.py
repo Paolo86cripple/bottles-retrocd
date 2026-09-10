@@ -17,7 +17,7 @@ from gamepad_backend import (
 )
 from sandbox_backend import INSTANCE, SandboxBackend, run_cmd
 
-NS_HELPER = Path(__file__).with_name("gamepad_ns_helper.py")
+NS_HELPER = Path(__file__).with_name("gamepad_ns_entry.py")
 
 
 @dataclass(frozen=True, slots=True)
