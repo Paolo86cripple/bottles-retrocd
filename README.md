@@ -2,7 +2,23 @@
 
 GTK4 controller for running native Bottles inside a dedicated Bubblejail instance, with CDEmu/UDisks2 integration for retro optical media and a read-only Redump/TOSEC verifier.
 
-Current release candidate: **0.4.0**.
+Current stable release: **0.4.0**.
+
+## Arch / CachyOS release package
+
+The official 0.4.0 Arch/CachyOS binary package is:
+
+```text
+bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zst
+```
+
+Install it with pacman:
+
+```fish
+sudo pacman -U ./bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zst
+```
+
+The package preserves the user's RetroCD configuration, Bubblejail `Bottles` instance/private HOME, prefixes and archive on normal removal. It conflicts with/replaces the obsolete historical local package name `bottles-retro-cd-gui`.
 
 ## Goals
 
@@ -80,9 +96,9 @@ After Bottles starts, a host-side RetroCD monitor watches only the identity of s
 
 The namespace broker does not require host privilege elevation. It discovers the user namespace that owns Bubblejail's mount namespace with Linux `NS_GET_USERNS`, prepares detached exact-node mounts in a private staging mount namespace, revalidates pinned device/sysfs object identity, and only then enters the running Bubblejail mount/network namespaces.
 
-The implementation fails closed. If namespace entry, exact sysfs reconstruction, udev notification or post-change jail probing cannot be proven, RetroCD reports `[FAIL] Gamepad hotplug` rather than widening device access. Device numbers may change after reconnect; the security invariant is exact agreement with the controller nodes currently detected on the host, not a fixed `event24` number.
+The implementation fails closed. If namespace entry, exact sysfs reconstruction, udev notification or post-change jail probing cannot be proven, RetroCD reports `[FAIL] Gamepad hotplug` rather than widening device access. Device numbers may change after reconnect; the security invariant is exact agreement with the controller nodes currently detected on the host, not a fixed event number.
 
-Switch/gyro paths that require hidraw are deliberately out of scope for 0.4.0.
+Switch/gyro paths that require hidraw are deliberately outside the 0.4.0 standard-controller path.
 
 ## GPU/Bubblejail launch policy
 
@@ -116,35 +132,17 @@ Verifier data is stored under XDG data/cache directories, not in the dump tree. 
 
 The protection scanner never mounts or executes the image. It reads ISO9660/Joliet structures directly, supports common 2048/2336/2352-sector layouts, bounds directory depth/count/extent size and file samples, performs a streaming raw-signature pass, and reports evidence separately from DAT metadata.
 
-## Current validation
+## 0.4.0 validation
 
-The 0.4.0 candidate has been validated on the target CachyOS system for:
+The stable 0.4.0 release was validated on the target CachyOS system for CDEmu/UDisks2 RO handling, Bubblejail isolation, persistent configuration, strict AMD GPU selection, Wayland/XWayland, audio, multidisc, Redump/TOSEC verification, network-off runner persistence and Xbox One S exact-node hotplug.
 
-- CDEmu temporary-device create/load/unload/remove and advanced D-Bus options;
-- UDisks2 read-only mounts and denied filesystem writes;
-- Bubblejail private HOME, whitelist enforcement, hidden real HOME and network isolation;
-- real temporary host sentinels used for non-whitelist isolation checks;
-- persistent GPU selection and strict DRM/Vulkan isolation on both available AMD GPUs;
-- mandatory pre/post launch GPU proof;
-- Wayland and XWayland;
-- audio;
-- persistent Bottles GSettings/keyfile preferences;
-- dynamic `/dev/srX` plus `/mnt/cdemu` integration;
-- runner persistence after temporary network ON followed by network OFF;
-- static bridge and live multidisc swaps;
-- Discworld Noir three-disc Redump set;
-- Discworld Noir with `proton-cachyos-native` + D7VK: native Wayland works, while XWayland enters fullscreen directly;
-- Xbox One S controller static Bubblejail path: only the current `jsX` + matching `eventX` visible, readable/writable, no unrelated input nodes, no `hidraw`, and inputs responding;
-- Xbox One S physical hotplug on a running Bottles instance: initial `event9 + js0` PASS with `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`; disconnect PASS with no gamepad nodes and `udev=notified`; reconnect without restarting Bottles PASS with `event9 + js0`, `sysfs=exact`, `udev=notified`, `hidraw=hidden`;
-- verifier/source immutability and lifecycle/update negative paths.
+The Arch/CachyOS package completed clean target builds with **151/151 tests PASS**, installed/updated successfully, reported **53 files / 0 altered files**, passed installed Bubblejail and Discworld Noir launch validation, and passed uninstall-preservation checks. The final GTK/D-Bus identity is `io.github.Paolo86cripple.BottlesRetroCD`.
 
-Current CI regression suite: **151 unit tests PASS** on the gamepad hotplug implementation. CI also compiles every Python module including the display/gamepad wrappers, namespace entry helper and namespace mount/udev helper, treats `ResourceWarning` as an error, checks shell syntax and scans for unsafe dynamic execution patterns.
+## Run locally from source
 
-## Run locally
+Nothing is installed by the source tree:
 
-Nothing is installed by this tree:
-
-```sh
+```fish
 ./run-local.sh
 ```
 
@@ -156,34 +154,20 @@ The existing Bubblejail instance is expected at:
 ~/.local/share/bubblejail/instances/Bottles/
 ```
 
-The verifier also has a CLI:
-
-```sh
-python verifier_cli.py stats
-python verifier_cli.py verify /path/to/disc.cue --root /path/to/archive
-python verifier_cli.py verify-set /path/to/disc1.cue /path/to/disc2.cue --root /path/to/archive
-python verifier_cli.py scan /path/to/disc.iso --root /path/to/archive
-python verifier_cli.py verify-scan /path/to/disc.iso --root /path/to/archive
-python verifier_cli.py update redump
-python verifier_cli.py update tosec
-```
-
 ## Important security boundary
 
 The GTK controller, verifier, CDEmu daemon and libMirage run on the host as the logged-in user. Bubblejail protects **Bottles/Wine**, not these host-side components. Consequently all host-side parsing paths are written fail-closed and archive inputs are treated as untrusted data.
-
-The gamepad hotplug monitor/helpers are part of the host-side controller. They target only the namespaces of the already-running `Bottles` Bubblejail instance and pass only validated gamepad device/sysfs references; they do not create a persistent broad device share or require privilege elevation.
 
 Persistent `[network]` in `services.toml` is rejected. The GUI only enables Bottles networking transiently for the selected launch. The verifier updater has its own narrower HTTPS/official-host policy.
 
 ## Post-0.4.0 roadmap
 
-- **Native legacy optical DRM compatibility/emulation** — first post-release-hardening objective. Detect and reproduce the original disc-verification behavior needed by legally obtained legacy media (for example SafeDisc/SecuROM-era checks) through Wine/CDEmu/libMirage-compatible mechanisms rather than treating a No-CD/cracked executable as the normal solution. Survey existing maintained or archival open-source projects and upstream Wine/CDEmu/libMirage work, reuse well-understood implementations where licensing permits, keep each protection backend optional and OFF by default, and preserve exact optical/sandbox isolation.
-- **Legacy DirectX compatibility managers** such as dgVoodoo2/DxWrapper, optional and OFF by default.
-- **libRashader + Slang shaders**, optional and OFF by default, after the base release is packaged and stable.
-- abnormal-termination recovery for live multidisc cache devices.
+1. **Native legacy optical DRM compatibility/emulation** — active next objective: SafeDisc, SecuROM, LaserLock, StarForce and related Windows 9x/XP protections through original-media-compatible mechanisms rather than No-CD/cracked executables.
+2. **Legacy DirectX compatibility manager** — DxWrapper/dgVoodoo2-style DirectX 5–9 support, optional and OFF by default.
+3. **libRashader + Slang shaders** — optional and OFF by default after the compatibility foundation is stable.
+4. **Abnormal-termination recovery for live multidisc cache devices** — safe recovery without weakening device ownership validation.
 
-None of these should weaken the existing Bubblejail boundary or become mandatory for ordinary launch paths.
+None of these may weaken the validated Bubblejail boundary or become mandatory for ordinary launch paths.
 
 ## License and upstream attribution
 
