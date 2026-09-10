@@ -14,6 +14,11 @@ _spec.loader.exec_module(_hard)
 
 Gtk = _hard.Gtk
 
+from runtime_bus_audit import (  # noqa: E402
+    bubblejail_runtime_bus_audit_invocation,
+    format_runtime_bus_audit,
+    parse_runtime_bus_audit_output,
+)
 from runtime_surface_audit import (  # noqa: E402
     bubblejail_runtime_audit_invocation,
     format_runtime_audit,
@@ -79,6 +84,14 @@ class Window(_hard.Window):
         finally:
             self.cdemu_ownership.release_session_lock()
 
+    def _host_dconf_profile_line(self) -> str:
+        cfg = self.sandbox.config()
+        portal = cfg.get("xdg_desktop_portal") or {}
+        if not isinstance(portal, dict):
+            return "[HOST-PROFILE] xdg_desktop_portal: configurazione non valida"
+        enabled = bool(portal.get("dconf_dbus", False))
+        return f"[HOST-PROFILE] xdg_desktop_portal.dconf_dbus={'true' if enabled else 'false'}"
+
     def run_runtime_surface_audit(self) -> str:
         if not self.sandbox.running():
             raise RuntimeError(
@@ -90,7 +103,21 @@ class Window(_hard.Window):
                 f"Audit runtime Bubblejail terminato con rc={proc.returncode}:\n{proc.stdout[-4000:]}"
             )
         report = parse_runtime_audit_output(proc.stdout)
-        return format_runtime_audit(report)
+
+        bus_proc = run_cmd(bubblejail_runtime_bus_audit_invocation(INSTANCE), timeout=20)
+        if bus_proc.returncode != 0:
+            raise RuntimeError(
+                f"Audit D-Bus Bubblejail terminato con rc={bus_proc.returncode}:\n{bus_proc.stdout[-4000:]}"
+            )
+        bus_report = parse_runtime_bus_audit_output(bus_proc.stdout)
+
+        return (
+            format_runtime_audit(report)
+            + "\n\n"
+            + format_runtime_bus_audit(bus_report)
+            + "\n\n"
+            + self._host_dconf_profile_line()
+        )
 
     def set_busy(self, busy: bool):
         super().set_busy(busy)
