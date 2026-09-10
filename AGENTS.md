@@ -62,14 +62,15 @@ Out of scope unless a future concrete requirement changes the decision: DOS mana
 
 - Reuse the existing Bubblejail instance named `Bottles`; do not create a second persistent instance.
 - Bottles/Wine/runners/DXVK/runtimes/prefixes live in Bubblejail's private HOME.
-- GTK controller, CDEmu/libMirage control/parsing, verifier and gamepad hotplug helpers are host-side as the logged-in user.
+- GTK controller, CDEmu/libMirage control, DAT updater controller and gamepad hotplug helpers are host-side as the logged-in user.
+- Archive verification/protection parsing runs in a dedicated bubblewrap worker; official DAT updates run in a separate networked bubblewrap worker.
 - Gamepad helpers may target only the active `Bottles` instance and validated controller device/sysfs references.
-- Bubblejail is the security boundary for Bottles/Wine, not for host-side controller/verifier/CDEmu/libMirage/gamepad helpers.
+- Bubblejail remains the security boundary for Bottles/Wine. Dedicated bubblewrap workers provide additional least-privilege boundaries for verifier/scanner and official DAT updates.
 - CDEmu is controlled through its D-Bus API model; `cdemu-client` is optional.
 - UDisks2 mount state must be verified, not inferred from command success.
 - Archive root is explicit persistent configuration; no release-time user-specific storage path may be hardcoded.
 - Local-tree entrypoint remains `run-local.sh`; installed entrypoint is `/usr/bin/bottles-retrocd`, delegating to `/usr/lib/bottles-retrocd/run-local.sh`.
-- The final gamepad wrapper is the authoritative application entrypoint and publishes `io.github.Paolo86cripple.BottlesRetroCD`, `Bottles RetroCD`, `0.4.0`.
+- The final gamepad wrapper is the authoritative released 0.4.0 application identity layer and publishes `io.github.Paolo86cripple.BottlesRetroCD`, `Bottles RetroCD`, `0.4.0`.
 
 ## Security invariants
 
@@ -103,7 +104,8 @@ Security regressions are release blockers.
 - Network may be enabled only transiently for a selected launch.
 - Do not make network persistent merely to download runners.
 - Runner workflow: temporary network ON for download/install, fully close Bottles, reopen OFF and confirm persistence in private HOME.
-- Verifier updater networking is independent: HTTPS only to explicit official Redump/TOSEC hosts with redirect revalidation.
+- Verifier/scanner worker has an unshared network namespace and may see at most loopback.
+- Official DAT updater networking is isolated in its own bubblewrap worker and remains HTTPS-only to explicit official Redump/TOSEC hosts with redirect revalidation.
 
 ### Display / preferences
 
@@ -164,14 +166,20 @@ Security regressions are release blockers.
 
 ## Redump / TOSEC verifier rules
 
-- Verifier is host-side but read-only with respect to archive material; never mount/execute/rename/rewrite/move/copy/touch dump files.
+- Archive verification and protection scanning execute in a dedicated bubblewrap worker, never directly in the GTK/CLI host process.
+- Verifier/scanner worker mounts application code, authorized archive and existing catalog read-only; only the dedicated verifier hash-cache is writable.
+- Verifier/scanner worker uses a private HOME and `/tmp`, an unshared network namespace, minimal `/dev`, and no host `/proc`, `/sys` or runtime state. Synthetic parent directories required for exact binds do not count as host-runtime exposure.
+- The verifier sandbox must fail closed if `bwrap` is missing/untrusted, path layout overlaps protected trees, inputs escape the authorized archive, or positive attestation fails.
 - Canonicalize CUE/TOC references below authorized archive and reject traversal/absolute/Windows/UNC escapes.
 - Hash CRC32/MD5/SHA1 in one streaming pass; stat before/after; cache identity includes device/inode/size/mtime/ctime under XDG cache.
 - Parse Logiqx incrementally; retain source/DAT/game/description/serial/version/protection metadata.
 - Build catalog in staging, run SQLite integrity checks, reject empty/unverifiable indexes.
 - `MATCH 1:1` requires one complete unique game; partial is `MISMATCH`; equivalent complete records remain `AMBIGUOUS`.
-- Official updater is HTTPS-only with explicit host allow-list, redirect revalidation, bounded download/ZIP sizes/counts, traversal/symlink rejection, staged indexing and rollback.
-- Manual DAT imports remain in a separate source namespace.
+- Official DAT updates execute in a second, separate bubblewrap worker. It receives network access plus RW only to verifier data/catalog and verifier cache; the configured game archive must not be mounted or visible.
+- Updater data/cache paths must not overlap the configured archive or application code. The worker must fail closed if the configured archive is visible before any download begins.
+- The updater's filesystem is otherwise minimal: `/usr` RO, private HOME and `/tmp`, minimal `/dev`, and only exact RO host files needed for DNS/TLS resolution rather than broad `/etc` exposure.
+- Official updater remains HTTPS-only with explicit host allow-list, redirect revalidation, bounded download/ZIP sizes/counts, traversal/symlink rejection, staged indexing, integrity checks and rollback.
+- Manual DAT imports remain in a separate source namespace and are not routed through the networked official updater worker.
 - Protection scanner is read-only, bounded, keeps the 64 MiB per-directory-extent limit, streams raw signatures with overlap, and never overrides cryptographic matching.
 
 ## Coding practices
@@ -212,6 +220,26 @@ Target validation included:
 - live-session broad eject correctly refused; active-device eject succeeded;
 - uninstall-preservation PASS.
 
+## 0.4.1 hardening validation in progress
+
+Focused branch: `hardening/0.4.1-verifier-sandbox`.
+
+Completed gates:
+
+- dedicated verifier/scanner bubblewrap boundary implemented without changing the released Bottles/Wine Bubblejail runtime policy;
+- target attestation PASS on CachyOS: archive=RO, app=RO, catalog=RO, cache=RW, host HOME sentinel hidden, network=loopback only, `/proc` hidden, `/sys` hidden, host `/run` runtime state hidden;
+- real Discworld Noir Disc 1 CUE/BIN verification through the worker PASS with Redump `MATCH 1:1` and protection scanner completing direct raw/ISO reads without mount/execution;
+- GUI `Test verifica sandbox` PASS and GUI `Verifica + confronta scanner` PASS on the same image;
+- official Redump updater moved to a separate networked bubblewrap worker; successful target update rebuilt the live catalog to 1 catalog / 61096 games / 199394 ROM records;
+- immediate post-update Discworld Noir verification remained `MATCH 1:1`, proving download → staged catalog rebuild → atomic install → isolated verifier read path without archive regression;
+- CI at updater-boundary HEAD: 180/180 unit tests PASS plus Python syntax, shell syntax, Arch packaging syntax, release identity/metadata and unsafe dynamic-execution scan PASS.
+
+Still required before merge/release consideration:
+
+- exercise the official updater through the GUI path on the target system;
+- review/validate remaining 0.4.1 hardening items before deciding branch split/merge scope;
+- no automatic merge; owner approval remains required.
+
 ## Arch / CachyOS packaging contract
 
 Packaging layout:
@@ -225,7 +253,7 @@ Packaging layout:
 
 Packaging policy:
 
-- final package metadata is `pkgver=0.4.0`, `pkgrel=3`;
+- final 0.4.0 package metadata is `pkgver=0.4.0`, `pkgrel=3`;
 - `conflicts=('bottles-retro-cd-gui')` and `replaces=('bottles-retro-cd-gui')` intentionally migrate the obsolete local package name;
 - no package-owned files under `/home`, `/run`, `/mnt`, `/media`, `/dev`, `/sys`, or user data/config locations;
 - install/remove scripts never create/reset/delete Bubblejail instances, private HOME, prefixes, RetroCD config, archive or verifier data;
@@ -243,15 +271,16 @@ Packaging policy:
 - Keep commits focused; compare branch with `main` before merge; no force-updates.
 - Do not commit generated `src/`, `pkg/`, built package archives, caches, private instance state, mounted media, DAT downloads or user-specific paths.
 - Published tags are immutable. `0.4.0` points to `15b1e0acc61d61978051d49d97bd17cb97efb348` and must never be moved.
-- GitHub Release 0.4.0 should use tag `0.4.0` and distribute the validated `bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zst` asset plus SHA256.
+- GitHub Release 0.4.0 uses tag `0.4.0` and distributes the validated `bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zst` asset plus SHA256.
 - Future fixes/releases use new branches, version/package revisions and tags as appropriate; never rewrite the 0.4.0 release history.
 
 ## Post-release roadmap, agreed order
 
-1. **Native legacy optical DRM compatibility/emulation — ACTIVE NEXT OBJECTIVE.** Investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP optical protections; reproduce original verification behavior via Wine/CDEmu/libMirage or compatible components; reuse license-compatible open source; No-CD/cracks are not the normal solution; keep optional/fail-closed without broader sandbox permissions.
+0. **0.4.1 compatibility-preserving hardening — ACTIVE.** Harden host-side verifier/scanner/updater and lifecycle ownership/recovery without tightening the already validated game runtime in ways that could reduce compatibility.
+1. **Native legacy optical DRM compatibility/emulation.** Investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP optical protections; reproduce original verification behavior via Wine/CDEmu/libMirage or compatible components; reuse license-compatible open source; No-CD/cracks are not the normal solution; keep optional/fail-closed without broader sandbox permissions.
 2. **Legacy DirectX compatibility layer/manager.** DxWrapper/dgVoodoo2-style DirectX 5–9 support, optional/OFF by default, after DRM work and before shaders.
 3. **libRashader + Slang shaders.** Optional/OFF by default per game/bottle after the compatibility foundation is stable.
-4. **Abnormal-termination recovery for live multidisc cache devices.** Recover safely without weakening device-ownership validation.
+4. **Abnormal-termination recovery for live multidisc cache devices.** Recover safely without weakening device-ownership validation; this may be pulled into the active 0.4.1 hardening cycle if implemented conservatively.
 
 Post-release maintenance backlog:
 
