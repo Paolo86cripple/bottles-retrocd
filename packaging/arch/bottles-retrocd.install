@@ -1,0 +1,16 @@
+post_install() {
+  printf '%s\n' \
+    'Bottles RetroCD reuses the per-user Bubblejail instance named Bottles.' \
+    'The package does not create, reset or delete Bubblejail instances or user data.' \
+    'Launch Bottles RetroCD and select the archive root if it is not already configured.'
+}
+
+post_upgrade() {
+  post_install
+}
+
+post_remove() {
+  printf '%s\n' \
+    'Bottles RetroCD package files were removed.' \
+    'User config, archive data and Bubblejail private HOME/instances were intentionally preserved.'
+}

@@ -1,0 +1,68 @@
+# Maintainer: Paolo86cripple <https://github.com/Paolo86cripple>
+
+pkgname=bottles-retrocd
+pkgver=0.4.0
+pkgrel=1
+pkgdesc='Hardened Bottles launcher for Windows retro CD/DVD games'
+arch=('x86_64')
+url='https://github.com/Paolo86cripple/bottles-retrocd'
+license=('GPL-3.0-or-later')
+depends=(
+  'python'
+  'python-gobject'
+  'gtk4'
+  'bottles'
+  'bubblejail'
+  'cdemu-daemon'
+  'libmirage'
+  'udisks2'
+  'vulkan-tools'
+  'iproute2'
+  'util-linux'
+)
+optdepends=(
+  'sudo: update CDEmu/libMirage components from the Componenti tab'
+)
+makedepends=('git')
+install='bottles-retrocd.install'
+
+# Exact runtime source that passed the 0.4.0 pre-packaging security/compatibility gate.
+_commit='8c75163168164fef896041c6b1a62ddac19b3faf'
+
+source=(
+  "$pkgname::git+$url.git#commit=$_commit"
+  'bottles-retrocd-launcher'
+  'io.github.Paolo86cripple.BottlesRetroCD.desktop'
+  'io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml'
+)
+sha256sums=(
+  'SKIP'
+  '0ea1cd6d1a8ecf4ce90e97ac67ec1fe629c579bcfb8000f8d0be7d0433a05c39'
+  'a1076b9bab5d8279e24f397a05e45094b004c791d5aa118d3ac38c84995c872f'
+  'c6c8a1619bfc4cb150b41aa6574d12c9f5572b917edea03161ca023f6c29a4c0'
+)
+
+check() {
+  cd "$srcdir/$pkgname"
+
+  python -m compileall -q ./*.py
+  PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests -v
+  sh -n run-local.sh
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+
+  install -d "$pkgdir/usr/lib/$pkgname"
+  install -m644 ./*.py "$pkgdir/usr/lib/$pkgname/"
+  install -m755 run-local.sh "$pkgdir/usr/lib/$pkgname/run-local.sh"
+
+  install -Dm755 "$srcdir/bottles-retrocd-launcher" "$pkgdir/usr/bin/bottles-retrocd"
+  install -Dm644 "$srcdir/io.github.Paolo86cripple.BottlesRetroCD.desktop" "$pkgdir/usr/share/applications/io.github.Paolo86cripple.BottlesRetroCD.desktop"
+  install -Dm644 "$srcdir/io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml" "$pkgdir/usr/share/metainfo/io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 NOTICE "$pkgdir/usr/share/doc/$pkgname/NOTICE"
+  install -Dm644 README.md README-TESTING.md CHANGELOG.md -t "$pkgdir/usr/share/doc/$pkgname/"
+  install -Dm644 docs/*.md -t "$pkgdir/usr/share/doc/$pkgname/"
+}
