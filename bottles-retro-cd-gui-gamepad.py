@@ -267,7 +267,11 @@ class Window(_life.Window):
 
 
 # App.do_activate() resolves Window from the preserved base GUI module.
-_life._ext._base.Window = Window
+_release_base = _life._ext._base
+_release_base.APP_ID = "io.github.Paolo86cripple.BottlesRetroCD"
+_release_base.APP_NAME = "Bottles RetroCD"
+_release_base.VERSION = "0.4.0"
+_release_base.Window = Window
 App = _life.App
 
 if __name__ == "__main__":
