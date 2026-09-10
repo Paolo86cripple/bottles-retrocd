@@ -75,22 +75,20 @@ class Window(_hard.Window):
                 raise _hard.CDEmuOwnershipError(
                     "Journal CDEmu non risolto prima dell'avvio non-live; operazione rifiutata."
                 )
-            # Skip only _hard.Window.launch_bottles(), whose short operation
-            # context is the source of this nested-flock self-contention. The
-            # next class in the MRO is the validated gamepad/lifecycle launch
-            # path and still dispatches every CDEmu read/mutation through this
-            # object while the temporary exclusive lease is held.
             return super(_hard.Window, self).launch_bottles()
         finally:
             self.cdemu_ownership.release_session_lock()
 
     def _host_dconf_profile_line(self) -> str:
         cfg = self.sandbox.config()
-        common = cfg.get("common") or {}
-        if not isinstance(common, dict):
-            return "[HOST-PROFILE] common: configurazione non valida"
-        enabled = bool(common.get("dconf_dbus", False))
-        return f"[HOST-PROFILE] common.dconf_dbus={'true' if enabled else 'false'}"
+        portal = cfg.get("xdg_desktop_portal") or {}
+        if not isinstance(portal, dict):
+            return "[HOST-PROFILE] xdg_desktop_portal: configurazione non valida"
+        enabled = bool(portal.get("dconf_dbus", False))
+        return (
+            "[HOST-PROFILE] xdg_desktop_portal.dconf_dbus="
+            + ("true" if enabled else "false")
+        )
 
     def run_runtime_surface_audit(self) -> str:
         if not self.sandbox.running():
@@ -126,8 +124,6 @@ class Window(_hard.Window):
             button.set_sensitive(not busy)
 
 
-# The original App.do_activate resolves Window through the preserved release-base
-# module, so publish this outer wrapper there exactly like the prior layers.
 _hard._game._release_base.Window = Window
 App = _hard.App
 
