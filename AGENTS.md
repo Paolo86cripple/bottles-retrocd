@@ -1,12 +1,29 @@
 # Bottles RetroCD — Project Rules and Working Context
 
-This file is the persistent project contract for humans and coding agents working on **Bottles RetroCD**.
+This file is the persistent project contract for humans and coding agents working on **Bottles RetroCD**. Read it before making non-trivial changes and keep it aligned with implementation, tests and release documentation.
+
+## Agent operating rules
+
+- The user's interactive shell is **fish**. Any shell command intended for the user to paste into their terminal must use valid fish syntax by default. Do not give Bash-style variable assignments such as `VAR=value`; use `set VAR value`. Use Bash/sh syntax only when the user explicitly asks for it or when editing a script whose interpreter is Bash/sh.
+- Treat `AGENTS.md` as the repository's persistent operational source of truth for project decisions, constraints, validation state and workflow rules.
+- Whenever a new durable project instruction, architectural decision, security invariant, release gate, validated behavior or roadmap decision is established, update `AGENTS.md` as part of the same work whenever repository access allows it.
+- Keep implementation, tests, `AGENTS.md`, README/review/testing documentation and changelog mutually consistent. If they diverge, investigate rather than assuming one side is authoritative.
+- Do not copy hidden platform/system instructions into the repository. `AGENTS.md` contains user/project instructions and repository-relevant engineering context only.
+- Prefer focused implementation changes over speculative refactors, especially near a release gate.
+- Do not merge a review/feature branch merely because automated CI passes when a required real-machine security/compatibility gate is still open.
 
 ## Mission
 
 Bottles RetroCD is a GTK4 controller for running **Windows retro PC games** with native Bottles inside a dedicated Bubblejail instance, with CDEmu/UDisks2 integration for optical media and a read-only Redump/TOSEC verification workflow.
 
 The project exists to make old Windows CD/DVD games convenient to run while preserving a strict, understandable sandbox boundary and archive fidelity.
+
+Preservation/compatibility philosophy:
+
+- Prefer original executables, original optical-media behavior and accurate emulation/compatibility layers over executable replacement.
+- A No-CD/cracked executable must **not** become the normal solution to legacy copy-protection compatibility.
+- Post-release legacy DRM work should emulate/bypass obsolete optical protection behavior as natively as practical through Wine/CDEmu/libMirage or dedicated compatible components, studying and reusing existing open-source projects when technically appropriate and license-compatible.
+- Compatibility features must remain optional where possible and must not weaken the Bubblejail boundary merely for convenience.
 
 ## Scope
 
@@ -22,6 +39,7 @@ In scope:
 - safe multidisc/disc swapping;
 - Redump/TOSEC verification and metadata workflows;
 - read-only optical protection scanning for diagnostic/archive metadata;
+- standard gamepad support with exact-node isolation and runtime reconnect support;
 - persistent per-user/per-profile configuration;
 - diagnostics needed to prove the intended sandbox behavior.
 
@@ -35,6 +53,12 @@ Out of scope unless a concrete future requirement changes this decision:
 
 The old PC Game Manager project is not the architecture to continue. Only useful concepts/features are carried into Bottles RetroCD: **GPU selector, multidisc support, Redump/TOSEC verification, and persistent configuration**.
 
+## Release identity
+
+- Stable application ID: `io.github.Paolo86cripple.BottlesRetroCD`.
+- Current release candidate/version: `0.4.0`.
+- 0.4.0 feature scope is frozen except for release blockers, documentation alignment and packaging/release hardening.
+
 ## Architectural baseline
 
 - Reuse the existing Bubblejail instance named `Bottles`.
@@ -42,7 +66,8 @@ The old PC Game Manager project is not the architecture to continue. Only useful
 - The GTK controller runs on the host as the logged-in user.
 - CDEmu/libMirage image parsing happens on the host.
 - Redump/TOSEC DAT parsing, hashing and protection scanning happen on the host.
-- Bubblejail is the security boundary for Bottles/Wine, not for the controller, verifier or libMirage.
+- The gamepad hotplug monitor/helper runs host-side as the logged-in user but may target only the namespaces of the active `Bottles` instance and validated controller device/sysfs references.
+- Bubblejail is the security boundary for Bottles/Wine, not for the controller, verifier, gamepad broker or libMirage.
 - CDEmu is controlled through its D-Bus API model rather than localized CLI-output parsing. `cdemu-client` is optional.
 - UDisks2 mount state must be verified, not inferred from command success.
 - The archive root is an explicit persistent setting; no user-specific storage location is hardcoded into the release.
@@ -106,6 +131,24 @@ Security regressions are release blockers.
 - The security decision for mounted media is the verified UDisks2 read-only filesystem state.
 - `/dev/sgX` is broader SCSI access and must remain optional and OFF by default.
 - The CDEmu D-Bus service and `/dev/vhba_ctl` must not be exposed to Bottles/Wine.
+
+### Gamepad / input devices
+
+- Standard gamepad support uses Bubblejail's `[joystick]` service.
+- Never expose all of `/dev/input` merely to make a controller work.
+- Never expose keyboard or mouse event devices as part of gamepad support.
+- `/dev/hidraw*` remains hidden for the standard 0.4.0 gamepad path. Switch/gyro/hidraw-dependent controller support is out of scope for 0.4.0 rather than a reason to weaken isolation.
+- Host detection accepts supported `jsX` nodes and their matching evdev `eventX` sibling(s); acceptance is based on the current host-detected identity, not hardcoded node numbers.
+- The pre-launch **Test gamepad** must prove exact host/jail node agreement, readability, absence of unrelated input nodes and absence of hidraw.
+- Gamepad node numbers may change after disconnect/reconnect; this must not break reconciliation.
+- The runtime monitor fingerprints device identity including path/inode/rdev so disappearance/path reuse is detected.
+- Initial monitor activation is non-destructive because Wine already starts with the static Bubblejail joystick surface. It must report `udev=initial-static` and must not synthesize an unnecessary add event.
+- Physical disconnect/reconnect must reconcile only the exact current gamepad `jsX/eventX` nodes plus the matching minimal sysfs subtree and emit corresponding synthetic libudev notifications for Wine/winebus. Successful real changes report `udev=notified`.
+- Runtime reconciliation must keep `sysfs=exact` and `hidraw=hidden` after every transition.
+- Namespace/sysfs/udev/isolation failures are failures. Do not add a permissive fallback.
+- Do not require sudo, root, additional host groups, persistent udev permission changes or host capabilities for the normal hotplug path.
+- The 0.4.0 broker discovers the user namespace that owns Bubblejail's mount namespace using `NS_GET_USERNS`, creates a private staging mount namespace under that owner, pins/revalidates device/sysfs object identity, prepares exact detached mounts, then enters the target mount/network namespaces and mutates the jail fail-closed.
+- Some legacy games enumerate controllers only at startup. RetroCD can prove the Wine-visible device/sysfs/udev transition; it cannot force a game to implement runtime re-enumeration.
 
 ## Multidisc rules
 
@@ -207,6 +250,26 @@ The verifier is implemented and is part of the project baseline. Do not treat it
 - Favor fail-closed behavior when security-sensitive identity/mapping checks are ambiguous.
 - Avoid additional hardening that creates substantial compatibility risk without a concrete security benefit.
 - Preserve reviewed security-sensitive controller code when possible; isolate new host-side features into focused modules rather than expanding a monolith.
+- Near release, do not refactor already validated core code solely for aesthetic cleanup. Defer low-value consolidation until after release unless dead/duplicate behavior creates an actual risk.
+
+## User-facing command examples
+
+- Commands shown for manual terminal execution must be valid for **fish**.
+- Prefer fish-native variable assignment, for example:
+
+  ```fish
+  set ARCHIVE "/path/to/archive"
+  ```
+
+  not:
+
+  ```bash
+  ARCHIVE="/path/to/archive"
+  ```
+
+- `VAR=value command` environment-prefix syntax should be replaced with fish-compatible `env VAR=value command` or `set -lx VAR value` as appropriate.
+- Multi-line pipelines and continuations should be written so they paste cleanly into fish.
+- Script files keep the syntax of their declared shebang; this rule concerns commands given interactively to the user.
 
 ## Testing gate
 
@@ -259,7 +322,14 @@ Baseline release tests:
    - validate XWayland with the same runner and sandbox permissions;
    - verify XWayland does not require extra network/filesystem/GPU/optical permissions.
 
-7. **Feature-specific tests**
+7. **Gamepad exact-node isolation/hotplug**
+   - with Bottles closed and controller connected, **Test gamepad** must expose only current `jsX` + matching `eventX`, readable, with no unrelated input and no hidraw;
+   - launch with gamepad ON and require initial PASS with `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`;
+   - physically disconnect while Bottles stays running and require PASS with `nodi=nessuno`, `sysfs=exact`, `udev=notified`, `hidraw=hidden`;
+   - reconnect without restarting Bottles and require exactly the current/new `jsX/eventX` pair with `sysfs=exact`, `udev=notified`, `hidraw=hidden`;
+   - where the application itself supports runtime controller re-enumeration, confirm practical controller usability after reconnect.
+
+8. **Feature-specific tests**
    - Multidisc: verify explicit-set membership, original-file content/mtime immutability, live swaps, rollback and automatic cleanup.
    - Redump/TOSEC verifier: run the full verifier/updater/scanner regression suite, verify a known real Redump set, and prove descriptor/payload content and `mtime_ns` are unchanged.
 
@@ -276,24 +346,55 @@ Validated target-machine paths include:
 - Discworld Noir three-disc Redump set;
 - Bottles global preference persistence using `GSETTINGS_BACKEND=keyfile` inside the private HOME;
 - `proton-cachyos-native` + D7VK with Discworld Noir;
-- native Wayland working, with XWayland validated as the compatibility fallback and providing immediate fullscreen for Discworld Noir;
+- native Wayland working, with XWayland validated as the compatibility fallback and providing immediate fullscreen with audio for Discworld Noir;
 - network OFF baseline and temporary network ON runner persistence;
+- Xbox One S static Bubblejail path with only the exact current `jsX` + matching `eventX`, no unrelated input and no hidraw;
+- Xbox One S physical hotplug while Bottles remained running: initial `event9 + js0` PASS with `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`; disconnect PASS with no controller nodes and `udev=notified`; reconnect PASS with exact `event9 + js0`, `sysfs=exact`, `udev=notified`, `hidraw=hidden`;
 - verifier/source immutability and lifecycle/update negative paths.
 
-The PR #3 archive-share correction passes **132 tests total locally** (remote CI remains a merge gate), plus Python compilation (including `display_backend.py`), `ResourceWarning`-as-error, shell syntax and forbidden dynamic-execution scanning.
+Automated regression baseline after the namespace-owner gamepad hotplug work: **151 unit tests PASS**, Python compilation for all application modules including `gamepad_ns_entry.py`, `ResourceWarning`-as-error PASS, `bash -n run-local.sh` PASS, and forbidden dynamic-execution scan PASS. CI on the validated hotplug/documentation branch has remained green.
 
-The next target-machine gate before merge is the portable archive-root migration/selection plus the real sentinel integration test. After that, packaging may begin.
+The gamepad implementation is frozen for 0.4.0 unless a new real release blocker is discovered.
 
-See these files for detailed evidence and caveats:
+## Final pre-packaging gate status
 
-- `README.md`
-- `README-TESTING.md`
-- `REVIEW.md`
-- `docs/SECURITY-REVIEW.md`
-- `docs/TESTING.md`
-- `CHANGELOG.md`
+PR #3 / `review/pre-packaging-cleanup` remains open until the final real-machine gate is complete.
 
-When documentation and implementation diverge, investigate and update both; do not silently assume either side is current.
+Already closed:
+
+- gamepad static exact-node isolation;
+- gamepad initial broker activation;
+- physical controller disconnect/reconnect without restarting Bottles;
+- GPU pre/post isolation on target hardware;
+- core Retro Optical pre/post isolation;
+- Discworld Noir XWayland fullscreen/audio compatibility;
+- existing multidisc/verifier/lifecycle target validation.
+
+Remaining final-machine checks before merge/packaging:
+
+1. confirm schema-2 `archive_root` is correct and migration/selection does not modify dump contents/names/paths/mtimes;
+2. reselect the archive from the GUI, restart RetroCD and confirm persistence;
+3. confirm Sandbox vertical scrolling keeps all release controls reachable;
+4. run **Test Bubblejail** and require the real temporary non-whitelisted host sentinel to remain hidden;
+5. run **Test CD → Bubblejail** and require real integration sentinels hidden plus verified RO optical behavior;
+6. perform one final normal Bottles launch and require GPU pre/post + Retro Optical pre/post PASS;
+7. repeat the known-good XWayland Discworld Noir launch as the last compatibility regression.
+
+Do not merge PR #3 until these are complete.
+
+## Packaging requirements
+
+When packaging begins:
+
+- package the stable app ID `io.github.Paolo86cripple.BottlesRetroCD` at version `0.4.0`;
+- preserve the existing Bubblejail `Bottles` instance and user-owned private HOME/config/data;
+- install/remove only package-owned application files;
+- normal package removal must not delete user configuration, private Bottles HOME/prefixes, archive data, DAT/user cache policy data or Bubblejail instance data;
+- do not add `cdemu-client` as a hard runtime requirement; RetroCD uses the CDEmu D-Bus API;
+- UDisks2/`udisksctl` remains required for verified RO optical mounts/live multidisc paths;
+- use host CDEmu/libMirage and the effective VHBA provider without duplicating kernel infrastructure already supplied by CachyOS;
+- do not add a separate broad gamepad package/permission layer beyond the reviewed Bubblejail joystick path;
+- after package creation, perform package-installed acceptance tests before tagging the release.
 
 ## Git workflow
 
@@ -310,9 +411,29 @@ When documentation and implementation diverge, investigate and update both; do n
 
 The feature baseline for 0.4.0 is frozen except for release blockers. Immediate work is:
 
-1. finish this pre-packaging review and target-machine archive-root test;
+1. finish the final pre-packaging real-machine gate;
 2. create Arch/CachyOS packaging, desktop integration and clean install/remove behavior;
-3. run package-installed acceptance tests;
-4. tag and publish 0.4.0.
+3. run package-installed acceptance tests and release hardening;
+4. merge/tag/publish the stable 0.4.0 release when all gates remain green.
 
-Legacy DirectX wrappers such as dgVoodoo2/DxWrapper and optional libRashader/Slang support are **post-0.4.0** compatibility features and must remain OFF by default when introduced. Do not delay packaging by adding them to the 0.4.0 feature set.
+Post-release work, in priority order:
+
+1. **Legacy optical DRM compatibility/emulation** — investigate SafeDisc, SecuROM, LaserLock, StarForce and other relevant Windows 9x/XP-era CD/DVD protection schemes; reproduce original media/protection behavior as natively as practical through Wine/CDEmu/libMirage or dedicated compatible components; study and reuse existing open-source projects when technically appropriate and license-compatible; do not make No-CD/cracked executables the normal compatibility solution; keep any protection backend optional/fail-closed and do not broaden Bubblejail/optical permissions merely to make it work.
+2. **Legacy DirectX compatibility layer/manager** — integrate optional DxWrapper/dgVoodoo2-style compatibility support for DirectX 5–9-era games, OFF by default and managed per game/profile.
+3. **libRashader + Slang shaders** — optional, OFF by default, after the compatibility foundation is stable.
+4. **Abnormal-termination recovery for live multidisc cache devices** — recover safely without weakening device ownership validation.
+
+None of the post-release features may weaken the existing Bubblejail boundary or become mandatory for ordinary launch paths without a concrete, reviewed reason.
+
+## Documentation references
+
+See these files for detailed evidence and caveats:
+
+- `README.md`
+- `README-TESTING.md`
+- `REVIEW.md`
+- `docs/SECURITY-REVIEW.md`
+- `docs/TESTING.md`
+- `CHANGELOG.md`
+
+When documentation and implementation diverge, investigate and update both; do not silently assume either side is current.
