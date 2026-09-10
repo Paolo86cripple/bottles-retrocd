@@ -44,6 +44,41 @@ class Window(_hard.Window):
         else:
             raise RuntimeError("Layout Test inatteso: impossibile inserire Analizza runtime sandbox.")
 
+    def launch_bottles(self):
+        """Avoid self-contention between the short CDEmu operation lock and stale-state probe.
+
+        The hardening layer serializes the complete non-live launch with the
+        short operation flock. The preserved controller then calls
+        ``_cleanup_inactive_live_session()``, whose stale-state probe needs the
+        same lock through ``acquire_session_lock()``. Two independent opens of
+        the same flock file can conflict even within one process. For a non-live
+        launch, hold the already-supported session lease temporarily instead:
+        nested ownership checks become re-entrant on the same store, while a
+        genuinely separate RetroCD process is still excluded. No journal is
+        created and the lease is always released when the launch path returns.
+        Live multidisc keeps the original long-lived hardening path unchanged.
+        """
+        live_requested = bool(self.ui_get(self.live_multidisc_switch.get_active))
+        if live_requested:
+            return super().launch_bottles()
+
+        if not self.cdemu_ownership.session_locked:
+            self._recover_stale_cdemu_state()
+        self.cdemu_ownership.acquire_session_lock(timeout=2.0)
+        try:
+            if self.cdemu_ownership.load() is not None:
+                raise _hard.CDEmuOwnershipError(
+                    "Journal CDEmu non risolto prima dell'avvio non-live; operazione rifiutata."
+                )
+            # Skip only _hard.Window.launch_bottles(), whose short operation
+            # context is the source of this nested-flock self-contention. The
+            # next class in the MRO is the validated gamepad/lifecycle launch
+            # path and still dispatches every CDEmu read/mutation through this
+            # object while the temporary exclusive lease is held.
+            return super(_hard.Window, self).launch_bottles()
+        finally:
+            self.cdemu_ownership.release_session_lock()
+
     def run_runtime_surface_audit(self) -> str:
         if not self.sandbox.running():
             raise RuntimeError(
