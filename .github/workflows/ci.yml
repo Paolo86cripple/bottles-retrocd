@@ -87,6 +87,17 @@ jobs:
               actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
               if actual != digest:
                   raise SystemExit(f'sha256 mismatch for {name}: {actual}')
+
+          srcinfo = (root / '.SRCINFO').read_text(encoding='utf-8')
+          for required in (
+              '\tpkgver = 0.4.0',
+              '\tpkgrel = 2',
+              '\tconflicts = bottles-retro-cd-gui',
+              '\treplaces = bottles-retro-cd-gui',
+              '\tsource = bottles-retrocd::git+https://github.com/Paolo86cripple/bottles-retrocd.git#commit=8c75163168164fef896041c6b1a62ddac19b3faf',
+          ):
+              if required not in srcinfo:
+                  raise SystemExit(f'missing .SRCINFO metadata: {required}')
           PY
       - name: Unsafe dynamic execution scan
         run: >-
