@@ -30,4 +30,8 @@ if ! command -v udisksctl >/dev/null 2>&1; then
     printf 'Nota: udisksctl non trovato; mount RO UDisks2 e multidisco live non saranno disponibili.\n' >&2
 fi
 
-exec python3 "$HERE/bottles-retro-cd-gui-gamepad.py" "$@"
+if ! command -v bwrap >/dev/null 2>&1; then
+    printf 'Nota: bwrap non trovato; verifica/scanner saranno rifiutati in fail-closed, ma Bottles resta utilizzabile.\n' >&2
+fi
+
+exec python3 "$HERE/bottles-retro-cd-gui-hardening.py" "$@"
