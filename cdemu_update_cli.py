@@ -5,6 +5,7 @@ import shutil
 import subprocess
 
 from cdemu_lifecycle import format_report, inspect_lifecycle, update_command
+from cdemu_ownership import CDEmuOwnershipBusy, CDEmuOwnershipError, CDEmuOwnershipStore
 from sandbox_backend import INSTANCE, SandboxBackend
 
 SERVICE = "cdemu-daemon.service"
@@ -48,10 +49,8 @@ def _media_preflight() -> tuple[bool, str]:
     return True, ""
 
 
-def main() -> int:
-    print("Bottles RetroCD · aggiornamento componenti Retro Optical")
-    print("=========================================================\n")
-
+def _run_locked_update() -> int:
+    """Run all preflights and the package transaction while ownership is locked."""
     if SandboxBackend(INSTANCE).running():
         print("[FAIL] Bottles/Bubblejail è attivo. Chiudilo completamente prima di aggiornare.")
         return 2
@@ -82,6 +81,17 @@ def main() -> int:
     if answer != "AGGIORNA":
         print("Operazione annullata. Nessun pacchetto modificato.")
         return 0
+
+    # Re-check immediately before touching the daemon. The ownership flock has
+    # prevented any cooperating RetroCD process from changing CDEmu since the
+    # first preflight; this second probe catches uncooperative external clients.
+    if SandboxBackend(INSTANCE).running():
+        print("[FAIL] Bottles/Bubblejail è diventato attivo; aggiornamento annullato.")
+        return 2
+    media_ok, media_error = _media_preflight()
+    if not media_ok:
+        print(f"[FAIL] Stato CDEmu cambiato prima della transazione: {media_error}")
+        return 2
 
     was_active = report.daemon_service_active or report.daemon_reachable
     if was_active:
@@ -121,6 +131,28 @@ def main() -> int:
 
     print("\n[WARN] La transazione è riuscita ma il health check post-update non è completamente valido.")
     return 3
+
+
+def main() -> int:
+    print("Bottles RetroCD · aggiornamento componenti Retro Optical")
+    print("=========================================================\n")
+
+    store = CDEmuOwnershipStore()
+    try:
+        with store.operation(timeout=0.5):
+            if store.load() is not None:
+                print(
+                    "[FAIL] Esiste un journal ownership CDEmu non risolto. "
+                    "Apri Bottles RetroCD e completa prima il recovery/cleanup."
+                )
+                return 2
+            return _run_locked_update()
+    except CDEmuOwnershipBusy as exc:
+        print(f"[FAIL] {exc}")
+        return 2
+    except CDEmuOwnershipError as exc:
+        print(f"[FAIL] Impossibile provare il lock/ownership CDEmu: {exc}")
+        return 2
 
 
 if __name__ == "__main__":
