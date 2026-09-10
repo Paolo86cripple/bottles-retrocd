@@ -67,7 +67,7 @@ class Window(_life.Window):
         note = Gtk.Label(
             label=(
                 "Usa il servizio Bubblejail [joystick] e, dopo il lancio, un broker host-side che "
-                "entra soltanto nel mount namespace della stessa istanza per riconciliare i jsX/eventX "
+                "entra soltanto nei namespace necessari della stessa istanza per riconciliare i jsX/eventX "
                 "dei gamepad realmente presenti. /dev/input non viene condiviso globalmente e /dev/hidraw "
                 "resta escluso. Disconnect, reconnect e collegamento a Bottles già aperto vengono verificati "
                 "dall'interno della jail dopo ogni cambio."
@@ -88,23 +88,47 @@ class Window(_life.Window):
             )
 
     def _enable_sandbox_scroll(self) -> None:
-        page = self.launch_btn.get_parent()
-        if not isinstance(page, Gtk.Box):
+        sandbox_page = self.launch_btn.get_parent()
+        if not isinstance(sandbox_page, Gtk.Box):
             raise RuntimeError("Layout Sandbox inatteso: pagina non riconosciuta per lo scroll.")
-        page_num = self.notebook.page_num(page)
-        if page_num < 0:
-            raise RuntimeError("Pagina Sandbox non trovata nel notebook.")
+
         current = self.notebook.get_current_page()
-        self.notebook.remove_page(page_num)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_hexpand(True)
-        scroll.set_vexpand(True)
-        scroll.set_child(page)
-        self.notebook.insert_page(scroll, Gtk.Label(label="Sandbox"), page_num)
-        if current == page_num:
-            self.notebook.set_current_page(page_num)
-        self.sandbox_scroller = scroll
+        sandbox_scroller = None
+
+        # GtkNotebook's toplevel minimum can be constrained by any tall page,
+        # even when Sandbox itself is scrollable. Wrap every final release page
+        # so the window can genuinely shrink and each page scrolls vertically.
+        for page_num in range(self.notebook.get_n_pages() - 1, -1, -1):
+            page = self.notebook.get_nth_page(page_num)
+            if page is None:
+                continue
+            if isinstance(page, Gtk.ScrolledWindow):
+                page.set_min_content_height(0)
+                page.set_propagate_natural_height(False)
+                if page.get_child() is sandbox_page:
+                    sandbox_scroller = page
+                continue
+
+            label = self.notebook.get_tab_label_text(page) or ""
+            self.notebook.remove_page(page_num)
+
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.set_hexpand(True)
+            scroll.set_vexpand(True)
+            scroll.set_min_content_height(0)
+            scroll.set_propagate_natural_height(False)
+            scroll.set_child(page)
+            self.notebook.insert_page(scroll, Gtk.Label(label=label), page_num)
+
+            if page is sandbox_page:
+                sandbox_scroller = scroll
+
+        if current >= 0:
+            self.notebook.set_current_page(current)
+        if sandbox_scroller is None:
+            raise RuntimeError("Pagina Sandbox non trovata nel notebook dopo lo scroll globale.")
+        self.sandbox_scroller = sandbox_scroller
 
     def refresh_gamepad_status(self):
         status = getattr(self, "gamepad_status", None)
