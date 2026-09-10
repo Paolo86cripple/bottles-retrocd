@@ -12,6 +12,7 @@ if _spec is None or _spec.loader is None:
 _game = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_game)
 
+Gtk = _game.Gtk
 GLib = _game.GLib
 
 from verifier_sandbox import VerifierSandbox  # noqa: E402
@@ -23,12 +24,34 @@ class Window(_game.Window):
     def __init__(self, app):
         super().__init__(app)
         self.verifier_sandbox = VerifierSandbox()
+        self._install_verifier_sandbox_test()
 
     def _verifier_root(self) -> Path:
         root = getattr(self, "_archive_root", None)
         if not isinstance(root, Path) or not root.is_dir():
             raise RuntimeError("Configura prima una radice archivio RetroCD valida.")
         return root
+
+    def _install_verifier_sandbox_test(self) -> None:
+        self.verifier_sandbox_test_btn = Gtk.Button(label="Test sandbox verifier")
+        self.verifier_sandbox_test_btn.set_tooltip_text(
+            "Prova il boundary bwrap del verifier senza modificare i dump: archivio/codice/catalogo RO, "
+            "sola cache verifier RW, HOME host nascosta e rete host non condivisa."
+        )
+        self.verifier_sandbox_test_btn.connect(
+            "clicked", lambda *_: self.background(self.test_verifier_sandbox, report=True)
+        )
+        parent = self.update_redump_btn.get_parent()
+        if isinstance(parent, Gtk.Box):
+            parent.append(self.verifier_sandbox_test_btn)
+        else:
+            raise RuntimeError("Layout Verifica inatteso: impossibile inserire Test sandbox verifier.")
+
+    def test_verifier_sandbox(self) -> str:
+        result = self.verifier_sandbox.attest(self._verifier_root())
+        text = result.format()
+        GLib.idle_add(self.verifier_result.set_text, text)
+        return text
 
     def verify_selected_image(self):
         descriptor = self.selected_image()
@@ -58,6 +81,12 @@ class Window(_game.Window):
         result = self.verifier_sandbox.verify_scan(descriptor, self._verifier_root())
         GLib.idle_add(self.verifier_result.set_text, result.text)
         return result.text
+
+    def set_busy(self, busy: bool):
+        super().set_busy(busy)
+        button = getattr(self, "verifier_sandbox_test_btn", None)
+        if button is not None:
+            button.set_sensitive(not busy)
 
 
 # App.do_activate() resolves Window from the preserved release-base module.
