@@ -1,6 +1,6 @@
 # Testing
 
-Before packaging/release, close Bottles completely and run the relevant runtime tests in the **Test** tab plus one normal secured Bottles launch.
+Before packaging/release, close Bottles completely and run the relevant runtime tests in the **Test** tab plus one normal secured Bottles launch. User-facing terminal examples use fish syntax.
 
 ## 1. Archive root
 
@@ -10,7 +10,9 @@ Expected:
 - a legacy target path is migrated only when it actually exists;
 - migration/selection changes configuration only and does not move or modify dump files;
 - a newly selected archive persists after closing and reopening RetroCD;
-- the archive root and its ancestors cannot be added as persistent Bubblejail shares.
+- the archive root may be explicitly shared RO, but RW access within it and ancestor shares are rejected.
+
+Final 0.4.0 target result: **PASS**. Config directory/file permissions are `0700`/`0600`; GUI re-selection persisted; pre/post archive metadata signatures were identical.
 
 ## 2. CDEmu + UDisks2
 
@@ -20,7 +22,7 @@ Expected:
 - image loaded via D-Bus;
 - `/dev/srX` validated as the CDEmu-mapped SCSI optical block device;
 - DPM, transfer-rate, bad-sector and CSS options get/set/get successfully;
-- UDisks2 creates a RO mount;
+- UDisks2 creates a verified RO mount;
 - write attempt on the mount is denied;
 - temporary device is removed during cleanup.
 
@@ -39,7 +41,7 @@ Expected:
 - only loopback is present with base network OFF;
 - Wayland, XWayland/X11, audio and GPU/Vulkan surfaces are available according to the profile.
 
-The isolation sentinel is created before the test and removed afterward; a nonexistent machine-specific path is never accepted as isolation proof.
+Final 0.4.0 target result: **PASS=17 FAIL=0 WARN=0**.
 
 ## 4. GPU fail-closed launch
 
@@ -55,7 +57,7 @@ For each GPU path under acceptance testing:
 
 Any missing/invalid GPU identity, missing DRM character device, unsupported Bubblejail runtime argument, missing positive proof marker, visible non-selected DRM node, multiple Vulkan GPUs, vendor/device mismatch or failed post-launch attachment must fail closed. A post-launch proof failure must terminate the launched process group.
 
-The target Ryzen 7 9800X3D iGPU and Radeon RX 9070 XT paths have already passed this validation.
+Both target AMD GPU paths passed. The final Discworld Noir XWayland session again produced GPU pre/post PASS with the non-selected GPUs hidden.
 
 ## 5. Display and preference persistence
 
@@ -67,19 +69,34 @@ Expected:
 - forcing XWayland does not add filesystem, network, GPU or optical permissions;
 - Bottles global preferences persist through the isolated GSettings `keyfile` backend after a full close/reopen.
 
-Discworld Noir has been target-validated with `proton-cachyos-native` + D7VK: XWayland enters fullscreen directly with working audio.
+Final Discworld Noir acceptance with `proton-cachyos-native` + D7VK and XWayland: **PASS**, including the known-good fullscreen/audio behavior.
 
 ## 6. CD → Bubblejail
 
 Expected:
 
 - temporary CDEmu drive and RO host mount;
-- raw `/dev/srX` is the validated CDEmu optical device and is visible only when explicitly enabled;
+- raw `/dev/srX` is the validated CDEmu optical device when explicitly requested;
 - `/mnt/cdemu` is visible and not writable when requested;
 - real temporary host sentinel directories stay hidden;
 - cleanup removes temporary resources.
 
-## 7. Redump/TOSEC verifier
+Final target result: **PASS**. `/dev/sr1` validated as SCSI optical type 5, host mount RO, two real sentinels hidden, `/mnt/cdemu` visible/read-only and cleanup complete.
+
+The block-layer `ro` flag may report RW for CDEmu/VHBA and is diagnostic only; the verified UDisks2 filesystem mount is the authoritative RO decision.
+
+## 7. Gamepad exact-node/hotplug
+
+Expected:
+
+- static `[joystick]` path exposes only current `jsX` plus matching `eventX` nodes;
+- `/dev/hidraw*` remains hidden;
+- initial running-Bottles activation reports `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`;
+- physical disconnect/reconnect while Bottles remains open reports `udev=notified` and continues to expose exactly the current controller surface.
+
+Final target result: **PASS**, including physical Xbox One S disconnect/reconnect and a final XWayland launch with `event9 + js0` exact and writable.
+
+## 8. Redump/TOSEC verifier
 
 Expected:
 
@@ -92,30 +109,29 @@ Expected:
 - protection scanning is reported separately from cryptographic DAT matching;
 - oversized malformed ISO directory extents are rejected fail-closed.
 
-## 8. Multidisc
+## 9. Multidisc
 
-Use an explicit saved set. Verify live swapping without closing Bottles, then close Bottles and require automatic cache cleanup. The selected active `/dev/srX` must remain stable and cached drives must not be exposed to Wine.
+Use an explicit saved set. Verify live swapping without closing Bottles, then close Bottles and require automatic cache cleanup. The selected active `/dev/srX` must remain stable and cached drives must not be exposed to Wine. Discworld Noir three-disc live swapping has already passed the 0.4.0 target gate.
 
 ## Automated gate
 
-```sh
-PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests -v
+```fish
+env PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests -v
 bash -n run-local.sh
 ```
 
-Expected current count: **132 tests PASS**. CI also compiles every Python module including `display_backend.py` and rejects `os.system`, `shell=True`, `eval` and dynamic `exec` patterns.
+Expected current count: **151 tests PASS**. CI also compiles every application module, including the final display/gamepad wrappers and namespace helpers, and rejects `os.system`, `shell=True`, `eval` and dynamic `exec` patterns.
 
-## Immediate pre-merge acceptance for `review/pre-packaging-cleanup`
+## Pre-packaging acceptance status
 
-1. verify the archive root was migrated/selected correctly;
-2. reselect the same archive and prove persistence after restart;
-3. run **Test Bubblejail** and require the temporary host sentinel hidden;
-4. run **Test CD → Bubblejail** and require both integration sentinels hidden plus RO optical policy PASS;
-5. launch Bottles and require GPU + Retro Optical pre/post PASS;
-6. repeat the working Discworld Noir XWayland launch and confirm direct fullscreen/audio.
+The `review/pre-packaging-cleanup` real-machine gate is **complete/PASS**:
 
-Only after these pass should the cleanup branch be merged and used as the packaging source baseline.
+1. archive root schema/persistence/immutability — PASS;
+2. resize + scroll on all notebook pages — PASS;
+3. Test Bubblejail with real sentinel — PASS;
+4. Test CD → Bubblejail with real sentinels and RO policy — PASS;
+5. final GPU + Retro Optical pre/post secured launch — PASS;
+6. final Discworld Noir XWayland launch — PASS;
+7. standard gamepad initial exact-node proof during the final launch — PASS.
 
-### Note on `/sys/class/block/srX/ro`
-
-For CDEmu/VHBA this flag may be `0` even for a normally loaded optical image. It is diagnostic only. Mounted filesystems must still be verified read-only, and raw device exposure remains optional.
+The branch may be merged only after the final documentation-only CI remains green and the repository owner explicitly chooses to merge. Packaging should use the merged `main` baseline.
