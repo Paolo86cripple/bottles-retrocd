@@ -183,9 +183,7 @@ class Window(_game.Window):
         base_count: int | None = None
         try:
             if self.cdemu_ownership.load() is not None:
-                raise CDEmuOwnershipError(
-                    "Esiste un journal CDEmu non risolto: nuova cache live rifiutata."
-                )
+                raise CDEmuOwnershipError("Esiste un journal CDEmu non risolto: nuova cache live rifiutata.")
             base_count = self.cdemu.number_of_devices()
             expected_images = tuple(str(entry.image.resolve(strict=True)) for entry in disc_set.discs)
             self.cdemu_ownership.begin(
@@ -202,12 +200,9 @@ class Window(_game.Window):
                     raise CDEmuOwnershipError("Journal CDEmu scomparso durante preparazione.")
                 expected_index = session.base_count + len(session.resources)
                 self.cdemu_ownership.set_pending(index=expected_index, image=str(image))
-
                 index = self.cdemu.add_device()
                 if index != expected_index:
-                    raise CDEmuOwnershipError(
-                        f"AddDevice ha restituito #{index}, atteso esattamente #{expected_index}."
-                    )
+                    raise CDEmuOwnershipError(f"AddDevice ha restituito #{index}, atteso esattamente #{expected_index}.")
                 sr, sg = self.cdemu.wait_mapping(index)
                 self.validate_cdemu_optical_device(sr)
                 self.cdemu.load(index, image)
@@ -221,17 +216,8 @@ class Window(_game.Window):
                 mount = self.ensure_ro_mount(sr)
                 target, ro = self.mount_info(sr)
                 if not target or not ro or target != mount:
-                    raise CDEmuOwnershipError(
-                        f"Cache Disco {entry.number}: mount RO non verificato per {sr}."
-                    )
-                resource = OwnedDevice(
-                    index=index,
-                    image=str(image),
-                    sr=sr,
-                    sg=sg,
-                    mount=mount,
-                    rdev=block_rdev(sr),
-                )
+                    raise CDEmuOwnershipError(f"Cache Disco {entry.number}: mount RO non verificato per {sr}.")
+                resource = OwnedDevice(index, str(image), sr, sg, mount, block_rdev(sr))
                 self.cdemu_ownership.commit_pending(resource)
                 cache[self._disc_cache_key(image)] = (index, sr, mount)
 
@@ -250,49 +236,36 @@ class Window(_game.Window):
 
     def _cleanup_disc_cache(self, cache, base_count):
         """Replace RAM-only suffix cleanup with journal-authorized cleanup."""
-        try:
-            session = self.cdemu_ownership.load()
-        except Exception as exc:
-            self.cdemu_ownership.release_session_lock()
-            return [f"journal CDEmu non verificabile: {exc}; nessun RemoveDevice eseguito"]
-        if session is None:
-            self.cdemu_ownership.release_session_lock()
-            if cache:
-                return ["cache CDEmu presente senza journal ownership: RemoveDevice rifiutato"]
-            return []
-        if base_count is not None and base_count != session.base_count:
-            self.cdemu_ownership.release_session_lock()
-            return [
-                f"base_count cache={base_count} diverso dal journal={session.base_count}: cleanup rifiutato"
-            ]
         if not self.cdemu_ownership.session_locked:
             try:
                 self.cdemu_ownership.acquire_session_lock(timeout=0.25)
             except Exception as exc:
                 return [f"lock CDEmu non acquisibile per cleanup: {exc}"]
         try:
+            session = self.cdemu_ownership.load()
+            if session is None:
+                if cache:
+                    return ["cache CDEmu presente senza journal ownership: RemoveDevice rifiutato"]
+                return []
+            if base_count is not None and base_count != session.base_count:
+                return [f"base_count cache={base_count} diverso dal journal={session.base_count}: cleanup rifiutato"]
             self._cleanup_owned_journal(stale_recovery=False)
+            return []
         except Exception as exc:
             return [f"cleanup ownership sospeso: {exc}"]
         finally:
             self.cdemu_ownership.release_session_lock()
-        return []
 
     def _cleanup_inactive_live_session(self):
         if self.sandbox.running():
-            if self.active_bridge_cache or self.cdemu_ownership.load() is not None:
-                return ["cleanup non eseguito: Bottles/Bubblejail è nuovamente attivo"]
-            return []
-
+            return ["cleanup non eseguito: Bottles/Bubblejail è nuovamente attivo"] if self.active_bridge_cache else []
         if not self.active_bridge_cache:
             recovery = self._recover_stale_cdemu_state()
             return [recovery] if recovery else []
 
         if self.active_bridge is not None:
             self.active_bridge.stop()
-        warnings = self._cleanup_disc_cache(
-            dict(self.active_bridge_cache), self.active_bridge_cache_base_count
-        )
+        warnings = self._cleanup_disc_cache(dict(self.active_bridge_cache), self.active_bridge_cache_base_count)
         if warnings:
             return warnings
         self.active_bridge = None
@@ -323,6 +296,23 @@ class Window(_game.Window):
     def run_integration_test(self):
         with self._cdemu_operation():
             return super().run_integration_test()
+
+    def eject_all_retrocd_media(self):
+        # Parent eject-all cleans a live cache first, which intentionally ends
+        # the persistent lease. Split the operation so the remaining unloads
+        # are then covered by a fresh short lock rather than running unlocked.
+        if self.sandbox.running():
+            return super().eject_all_retrocd_media()
+        had_cache = bool(self.active_bridge_cache)
+        if had_cache:
+            notes = self._cleanup_inactive_live_session()
+            if notes:
+                raise CDEmuOwnershipError("Espelli tutto: cleanup cache ownership non completato: " + "; ".join(notes))
+        with self._cdemu_operation():
+            text = super().eject_all_retrocd_media()
+        if had_cache:
+            return text.rstrip(".") + " · cache multidisco ownership ripulita."
+        return text
 
     def launch_bottles(self):
         live_requested = bool(self.ui_get(self.live_multidisc_switch.get_active))
