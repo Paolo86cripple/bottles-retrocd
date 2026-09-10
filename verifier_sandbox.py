@@ -42,6 +42,48 @@ class SandboxResponse:
     matched: bool | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SandboxAttestation:
+    archive_read_only: bool
+    app_read_only: bool
+    catalog_read_only: bool | None
+    cache_writable: bool
+    home_sentinel_hidden: bool | None
+    interfaces: tuple[str, ...]
+    proc_hidden: bool
+    sys_hidden: bool
+    run_hidden: bool
+
+    @property
+    def ok(self) -> bool:
+        catalog_ok = self.catalog_read_only is not False
+        sentinel_ok = self.home_sentinel_hidden is not False
+        return (
+            self.archive_read_only
+            and self.app_read_only
+            and catalog_ok
+            and self.cache_writable
+            and sentinel_ok
+            and set(self.interfaces).issubset({"lo"})
+            and self.proc_hidden
+            and self.sys_hidden
+            and self.run_hidden
+        )
+
+    def format(self) -> str:
+        catalog = "absent" if self.catalog_read_only is None else ("RO" if self.catalog_read_only else "RW")
+        home = "not-probed" if self.home_sentinel_hidden is None else ("hidden" if self.home_sentinel_hidden else "VISIBLE")
+        interfaces = ",".join(self.interfaces) if self.interfaces else "none"
+        status = "PASS" if self.ok else "FAIL"
+        return (
+            f"[{status}] Verifier sandbox: archive={'RO' if self.archive_read_only else 'RW'} · "
+            f"app={'RO' if self.app_read_only else 'RW'} · catalog={catalog} · "
+            f"cache={'RW' if self.cache_writable else 'non-RW'} · host-home-sentinel={home} · "
+            f"net={interfaces} · proc={'hidden' if self.proc_hidden else 'visible'} · "
+            f"sys={'hidden' if self.sys_hidden else 'visible'} · run={'hidden' if self.run_hidden else 'visible'}"
+        )
+
+
 def _private_dir(path: Path) -> Path:
     try:
         path.mkdir(parents=True, exist_ok=True)
@@ -135,6 +177,11 @@ def _sandbox_command(
         "--new-session",
         "--clearenv",
         "--ro-bind", "/usr", "/usr",
+        # Arch's dynamic linker is reached through the root-level /lib and
+        # /lib64 compatibility symlinks. A bwrap root starts empty, so recreate
+        # those links explicitly instead of exposing any additional host tree.
+        "--symlink", "usr/lib", "/lib",
+        "--symlink", "usr/lib", "/lib64",
         "--dev", "/dev",
         "--tmpfs", "/tmp",
     ]
@@ -194,6 +241,69 @@ def _trusted_bwrap(path: str) -> str:
     return str(resolved)
 
 
+def _host_home_sentinel(mounted: tuple[Path, ...]) -> Path | None:
+    """Choose an existing host-HOME path that is not intentionally mounted."""
+    try:
+        home = Path.home().resolve(strict=True)
+    except OSError:
+        return None
+    candidates = (
+        home / ".config",
+        home / ".ssh",
+        home / ".local" / "share" / "bubblejail",
+    )
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        if any(_overlaps(resolved, item) for item in mounted):
+            continue
+        return resolved
+    return None
+
+
+_PROBE_SCRIPT = r'''
+import json
+import os
+import socket
+import sys
+from pathlib import Path
+
+req = json.load(sys.stdin)
+readonly = getattr(os, "ST_RDONLY", 1)
+
+def is_ro(path):
+    return bool(os.statvfs(path).f_flag & readonly)
+
+cache = Path(req["cache"])
+probe = cache / (".retrocd-sandbox-probe-%d" % os.getpid())
+cache_rw = False
+try:
+    probe.write_bytes(b"probe")
+    cache_rw = probe.read_bytes() == b"probe"
+finally:
+    try:
+        probe.unlink()
+    except FileNotFoundError:
+        pass
+
+sentinel = req.get("home_sentinel")
+result = {
+    "archive_read_only": is_ro(req["archive"]),
+    "app_read_only": is_ro(req["app"]),
+    "catalog_read_only": is_ro(req["data"]) if req.get("data_present") else None,
+    "cache_writable": cache_rw,
+    "home_sentinel_hidden": (not Path(sentinel).exists()) if sentinel else None,
+    "interfaces": sorted(name for _idx, name in socket.if_nameindex()),
+    "proc_hidden": not Path("/proc").exists(),
+    "sys_hidden": not Path("/sys").exists(),
+    "run_hidden": not Path("/run").exists(),
+}
+print(json.dumps(result, sort_keys=True))
+'''
+
+
 class VerifierSandbox:
     """Client for read-only archive operations executed in the worker sandbox."""
 
@@ -209,19 +319,8 @@ class VerifierSandbox:
             )
         return _trusted_bwrap(path)
 
-    def run(
-        self,
-        operation: str,
-        paths: Iterable[Path],
-        root: Path,
-        *,
-        timeout: float | None = None,
-    ) -> SandboxResponse:
-        if operation not in _ALLOWED_OPERATIONS:
-            raise VerifierSandboxError(f"Operazione verifier sandbox non consentita: {operation!r}")
-
+    def _layout(self, root: Path) -> tuple[Path, Path, Path, Path]:
         archive = _canonical_archive(root)
-        inputs = _canonical_inputs(paths, archive)
         app_dir = Path(__file__).resolve(strict=True).parent
         data_dir = verifier_data_dir().expanduser().resolve(strict=False)
         cache_candidate = verifier_cache_dir().expanduser().resolve(strict=False)
@@ -241,6 +340,92 @@ class VerifierSandbox:
             data_dir=data_dir,
             cache_dir=cache_dir,
         )
+        return archive, app_dir, data_dir, cache_dir
+
+    def attest(self, root: Path, *, timeout: float = 10.0) -> SandboxAttestation:
+        """Execute a non-destructive proof of the effective verifier boundary."""
+        archive, app_dir, data_dir, cache_dir = self._layout(root)
+        bwrap = self._bwrap()
+        base = list(
+            _sandbox_command(
+                archive,
+                bwrap=bwrap,
+                app_dir=app_dir,
+                data_dir=data_dir,
+                cache_dir=cache_dir,
+            )
+        )
+        separator = base.index("--")
+        command = tuple(base[: separator + 1] + ["/usr/bin/python3", "-B", "-s", "-c", _PROBE_SCRIPT])
+        data_present = data_dir.is_dir()
+        sentinel = _host_home_sentinel((archive, app_dir, data_dir, cache_dir))
+        request = {
+            "archive": str(archive),
+            "app": str(app_dir),
+            "data": str(data_dir),
+            "data_present": data_present,
+            "cache": str(cache_dir),
+            "home_sentinel": str(sentinel) if sentinel is not None else None,
+        }
+        try:
+            proc = subprocess.run(
+                command,
+                input=json.dumps(request),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=timeout,
+                close_fds=True,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise VerifierSandboxError("Attestation verifier sandbox terminata per timeout.") from exc
+        except OSError as exc:
+            raise VerifierSandboxError(f"Impossibile avviare attestation verifier sandbox: {exc}") from exc
+        if proc.returncode != 0:
+            details = (proc.stderr or proc.stdout).strip()[-4000:]
+            raise VerifierSandboxError(
+                f"Attestation verifier sandbox fallita con rc={proc.returncode}: {details}"
+            )
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise VerifierSandboxError("Attestation verifier sandbox: risposta JSON non valida.") from exc
+        try:
+            result = SandboxAttestation(
+                archive_read_only=payload["archive_read_only"] is True,
+                app_read_only=payload["app_read_only"] is True,
+                catalog_read_only=(
+                    None if payload["catalog_read_only"] is None else payload["catalog_read_only"] is True
+                ),
+                cache_writable=payload["cache_writable"] is True,
+                home_sentinel_hidden=(
+                    None if payload["home_sentinel_hidden"] is None else payload["home_sentinel_hidden"] is True
+                ),
+                interfaces=tuple(str(item) for item in payload["interfaces"]),
+                proc_hidden=payload["proc_hidden"] is True,
+                sys_hidden=payload["sys_hidden"] is True,
+                run_hidden=payload["run_hidden"] is True,
+            )
+        except (KeyError, TypeError) as exc:
+            raise VerifierSandboxError("Attestation verifier sandbox: schema risposta non valido.") from exc
+        if not result.ok:
+            raise VerifierSandboxError(result.format())
+        return result
+
+    def run(
+        self,
+        operation: str,
+        paths: Iterable[Path],
+        root: Path,
+        *,
+        timeout: float | None = None,
+    ) -> SandboxResponse:
+        if operation not in _ALLOWED_OPERATIONS:
+            raise VerifierSandboxError(f"Operazione verifier sandbox non consentita: {operation!r}")
+
+        archive, app_dir, data_dir, cache_dir = self._layout(root)
+        inputs = _canonical_inputs(paths, archive)
 
         command = _sandbox_command(
             archive,
