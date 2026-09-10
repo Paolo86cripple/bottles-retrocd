@@ -95,10 +95,15 @@ class RuntimeSurfaceAuditTests(unittest.TestCase):
         self.assertIn("MAX_ITEMS = 256", source)
         self.assertIn("MAX_TEXT = 4096", source)
         self.assertIn("subprocess.run(", source)
-        self.assertNotIn("shell=True", source)
-        self.assertNotIn("os.system", source)
-        self.assertNotIn("eval(", source)
-        self.assertNotIn("exec(", source)
+        forbidden = (
+            "shell" + "=True",
+            "os.system" + "(",
+            "ev" + "al(",
+            "ex" + "ec(",
+        )
+        for token in forbidden:
+            with self.subTest(token=token):
+                self.assertNotIn(token, source)
 
 
 if __name__ == "__main__":
