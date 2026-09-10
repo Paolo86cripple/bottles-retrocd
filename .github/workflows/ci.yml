@@ -37,6 +37,7 @@ jobs:
           multidisc_backend.py
           protection_scanner.py
           retro_optical.py
+          runtime_bus_audit.py
           runtime_surface_audit.py
           sandbox_backend.py
           settings_backend.py
