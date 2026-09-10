@@ -20,7 +20,9 @@ provide a compatible effective `VHBA-MODULE`, which avoids duplicating CachyOS'
 kernel-provided VHBA infrastructure.
 
 `cdemu-client` is not required. `sudo` is optional and is used only by the
-interactive Componenti update action.
+interactive Componenti update action. `lspci`/`pciutils` is diagnostic
+enrichment only; GPU selection falls back safely to stable PCI identity when it
+is unavailable.
 
 The final 0.4.0 Arch/CachyOS candidate is `pkgrel=3`. It conflicts with and
 replaces the historical local package name `bottles-retro-cd-gui`, so an
@@ -73,19 +75,26 @@ The full target-machine package acceptance completed successfully for
 - Discworld Noir launched through the installed package using the validated
   Retro Optical path;
 - uninstall-preservation comparison showed configuration, Bubblejail state,
-  prefixes and archive content unchanged;
-- package was reinstalled afterward as `bottles-retrocd 0.4.0-2`.
+  prefixes and archive content unchanged.
 
 Final release review then found that the final GUI wrapper inherited legacy
 base constants `APP_ID=org.local.BottlesRetroCD`, `APP_NAME=Bottles Retro CD`
 and `VERSION=0.4.0-rc2`. The final wrapper now overrides only those three
 release-identity values to `io.github.Paolo86cripple.BottlesRetroCD`,
 `Bottles RetroCD` and `0.4.0`; sandbox/device/runtime policy is unchanged.
-Because package content changed, `pkgrel` was correctly incremented to 3 and
-the package source pin moved to the identity-fix commit.
+Because package content changed, `pkgrel` was incremented to 3 and the package
+source pin moved to the identity-fix commit.
 
-Before merge, rebuild/install `0.4.0-3` and perform the narrow reopened gate:
-151/151 package tests, `pacman -Qkk` integrity, GUI title/version and effective
-GTK application ID. The earlier security/Discworld/uninstall-preservation gates
-do not need to be repeated unless this narrow check exposes an unrelated
-regression.
+The narrow reopened `0.4.0-3` gate also passed on the target CachyOS system:
+
+- clean `makepkg --cleanbuild --syncdeps` completed with 151/151 tests passing;
+- upgrade from `0.4.0-2` to `0.4.0-3` completed successfully;
+- pacman reported the expected version/conflicts/replaces metadata;
+- `pacman -Qkk bottles-retrocd` reported 53 files and 0 altered files;
+- the effective D-Bus/GTK application ID was verified as
+  `io.github.Paolo86cripple.BottlesRetroCD`;
+- the stable GUI identity is `Bottles RetroCD 0.4.0`.
+
+The earlier GPU/Retro Optical/Discworld/gamepad/uninstall-preservation suite did
+not need to be repeated because the only runtime delta was the reviewed
+release-identity override.
