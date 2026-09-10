@@ -6,6 +6,11 @@ RetroCD therefore records an exact appended suffix and holds an inter-process
 flock while a live multidisc cache exists. Recovery never guesses ownership:
 all destructive steps require the same host boot, same CDEmu daemon instance,
 exact device count/index/mapping/rdev/media state and compatible RO mount state.
+
+A device is journaled as soon as AddDevice plus mapping/rdev are positively
+proved. Loading and the UDisks2 mount are subsequent stages. This deliberately
+narrows the unrecoverable crash window to the AddDevice->mapping proof itself;
+a crash after mapping but before load/mount can be cleaned safely.
 """
 from __future__ import annotations
 
@@ -26,6 +31,7 @@ from typing import Callable, Iterator, Protocol
 
 JOURNAL_SCHEMA = 1
 APP_DIRNAME = "bottles-retro-cd"
+MAX_JOURNAL_BYTES = 256 * 1024
 _BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 _HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
 _BOOT_RE = re.compile(r"^[0-9a-fA-F-]{16,64}$")
@@ -61,7 +67,14 @@ class OwnedDevice:
     rdev: int
 
     def to_json(self) -> dict[str, object]:
-        return {"index": self.index, "image": self.image, "sr": self.sr, "sg": self.sg, "mount": self.mount, "rdev": self.rdev}
+        return {
+            "index": self.index,
+            "image": self.image,
+            "sr": self.sr,
+            "sg": self.sg,
+            "mount": self.mount,
+            "rdev": self.rdev,
+        }
 
     @classmethod
     def from_json(cls, raw: object) -> "OwnedDevice":
@@ -77,7 +90,7 @@ class OwnedDevice:
             raise CDEmuOwnershipError("Journal CDEmu: mapping /dev/srX non valido.")
         if not isinstance(sg, str) or (sg and _SG_RE.fullmatch(sg) is None):
             raise CDEmuOwnershipError("Journal CDEmu: mapping /dev/sgX non valido.")
-        if not _absolute_string(mount):
+        if not isinstance(mount, str) or (mount and not _absolute_string(mount)):
             raise CDEmuOwnershipError("Journal CDEmu: mount non valido.")
         if not isinstance(rdev, int) or isinstance(rdev, bool) or rdev <= 0:
             raise CDEmuOwnershipError("Journal CDEmu: rdev non valido.")
@@ -188,8 +201,20 @@ class OwnershipSession:
                 raise CDEmuOwnershipError("Journal CDEmu: removing_index non valido.")
             if not resources or removing_index != resources[-1].index or pending is not None:
                 raise CDEmuOwnershipError("Journal CDEmu: removing_index incoerente.")
-        return cls(session_id, phase, boot_id, daemon_identity, owner_pid, owner_ticks, base_count,
-                   tuple(expected_raw), resources, pending, removing_index, created_at)
+        return cls(
+            session_id,
+            phase,
+            boot_id,
+            daemon_identity,
+            owner_pid,
+            owner_ticks,
+            base_count,
+            tuple(expected_raw),
+            resources,
+            pending,
+            removing_index,
+            created_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +256,7 @@ def process_start_ticks(pid: int) -> int | None:
     except OSError:
         return None
     end = text.rfind(")")
-    fields = text[end + 2:].split() if end >= 0 else []
+    fields = text[end + 2 :].split() if end >= 0 else []
     if len(fields) <= 19:
         return None
     try:
@@ -291,7 +316,8 @@ class CDEmuOwnershipStore:
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
             raise CDEmuOwnershipError("Directory stato CDEmu deve essere directory privata 0700 dell'utente.")
         self.root = resolved
-        self.journal_path, self.lock_path = resolved / "ownership.json", resolved / "operations.lock"
+        self.journal_path = resolved / "ownership.json"
+        self.lock_path = resolved / "operations.lock"
         return resolved
 
     def _open_lock(self) -> int:
@@ -317,7 +343,9 @@ class CDEmuOwnershipStore:
                 return
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise CDEmuOwnershipBusy("CDEmu è già gestito da un'altra sessione Bottles RetroCD; operazione rifiutata.")
+                    raise CDEmuOwnershipBusy(
+                        "CDEmu è già gestito da un'altra sessione Bottles RetroCD; operazione rifiutata."
+                    )
                 time.sleep(0.05)
 
     def acquire_session_lock(self, timeout: float = 2.0) -> None:
@@ -375,7 +403,11 @@ class CDEmuOwnershipStore:
     def _write(self, session: OwnershipSession) -> None:
         self._require_lock()
         root = self._secure_root()
-        payload = json.dumps(session.to_json(), ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        payload = json.dumps(
+            session.to_json(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ) + "\n"
+        if len(payload.encode("utf-8")) > MAX_JOURNAL_BYTES:
+            raise CDEmuOwnershipError("Journal CDEmu oltre il limite dimensionale.")
         fd, name = tempfile.mkstemp(prefix=".ownership-", suffix=".tmp", dir=root)
         temp = Path(name)
         try:
@@ -405,13 +437,21 @@ class CDEmuOwnershipStore:
             raise CDEmuOwnershipError(f"Journal CDEmu non leggibile: {exc}") from exc
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
             raise CDEmuOwnershipError("Journal CDEmu deve essere file regolare privato 0600 dell'utente.")
+        if info.st_size > MAX_JOURNAL_BYTES:
+            raise CDEmuOwnershipError("Journal CDEmu oltre il limite dimensionale.")
         try:
             raw = json.loads(self.journal_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise CDEmuOwnershipError(f"Journal CDEmu corrotto/non leggibile: {exc}") from exc
         return OwnershipSession.from_json(raw)
 
-    def begin(self, *, daemon_identity: str, base_count: int, expected_images: tuple[str, ...]) -> OwnershipSession:
+    def begin(
+        self,
+        *,
+        daemon_identity: str,
+        base_count: int,
+        expected_images: tuple[str, ...],
+    ) -> OwnershipSession:
         self._require_lock()
         if self.load() is not None:
             raise CDEmuOwnershipError("Esiste già un journal CDEmu non risolto; nuova cache live rifiutata.")
@@ -423,8 +463,20 @@ class CDEmuOwnershipStore:
         ticks = process_start_ticks(os.getpid())
         if ticks is None:
             raise CDEmuOwnershipError("Impossibile determinare start-time del processo RetroCD.")
-        session = OwnershipSession(uuid.uuid4().hex, "preparing", host_boot_id(), daemon_identity,
-                                   os.getpid(), ticks, base_count, canonical, (), None, None, int(time.time()))
+        session = OwnershipSession(
+            uuid.uuid4().hex,
+            "preparing",
+            host_boot_id(),
+            daemon_identity,
+            os.getpid(),
+            ticks,
+            base_count,
+            canonical,
+            (),
+            None,
+            None,
+            int(time.time()),
+        )
         self._write(session)
         return session
 
@@ -447,7 +499,9 @@ class CDEmuOwnershipStore:
             raise CDEmuOwnershipError("Nessun pending da riconciliare.")
         expected_without_pending = session.base_count + len(session.resources)
         if current_count != expected_without_pending:
-            raise CDEmuOwnershipError("Pending CDEmu ambiguo: un device potrebbe essere stato creato; cleanup automatico rifiutato.")
+            raise CDEmuOwnershipError(
+                "Pending CDEmu ambiguo: un device potrebbe essere stato creato; cleanup automatico rifiutato."
+            )
         updated = replace(session, pending=None)
         self._write(updated)
         return updated
@@ -460,9 +514,37 @@ class CDEmuOwnershipStore:
         if resource.index != session.pending.index or resource.image != session.pending.image:
             raise CDEmuOwnershipError("Risorsa CDEmu diversa dall'intent pending.")
         resources = (*session.resources, resource)
-        if [item.index for item in resources] != list(range(session.base_count, session.base_count + len(resources))):
+        if [item.index for item in resources] != list(
+            range(session.base_count, session.base_count + len(resources))
+        ):
             raise CDEmuOwnershipError("Risorse CDEmu non contigue.")
         updated = replace(session, resources=resources, pending=None)
+        self._write(updated)
+        return updated
+
+    def update_resource_mount(self, index: int, mount: str) -> OwnershipSession:
+        """Persist the verified UDisks2 mount after mapping/media stages."""
+        self._require_lock()
+        session = self.load()
+        if session is None or session.pending is not None or session.removing_index is not None:
+            raise CDEmuOwnershipError("Journal CDEmu non aggiornabile per mount nello stato corrente.")
+        canonical_mount = _canonical_text(mount)
+        if not canonical_mount.startswith("/"):
+            raise CDEmuOwnershipError("Mount CDEmu non assoluto.")
+        found = False
+        resources: list[OwnedDevice] = []
+        for item in session.resources:
+            if item.index == index:
+                if item.mount and item.mount != canonical_mount:
+                    raise CDEmuOwnershipError(
+                        f"Device #{index}: mount journal già fissato a un path diverso."
+                    )
+                item = replace(item, mount=canonical_mount)
+                found = True
+            resources.append(item)
+        if not found:
+            raise CDEmuOwnershipError(f"Device #{index} non presente nel journal CDEmu.")
+        updated = replace(session, resources=tuple(resources))
         self._write(updated)
         return updated
 
@@ -473,6 +555,8 @@ class CDEmuOwnershipStore:
             raise CDEmuOwnershipError("Journal CDEmu non attivabile nello stato corrente.")
         if len(session.resources) != len(session.expected_images):
             raise CDEmuOwnershipError("Cache CDEmu incompleta: journal non attivabile.")
+        if any(not item.mount for item in session.resources):
+            raise CDEmuOwnershipError("Cache CDEmu incompleta: uno o più mount RO non sono stati journalati.")
         updated = replace(session, phase="active")
         self._write(updated)
         return updated
@@ -504,7 +588,12 @@ class CDEmuOwnershipStore:
             raise CDEmuOwnershipError("Commit rimozione CDEmu senza intent coerente.")
         if session.resources[-1].index != index:
             raise CDEmuOwnershipError("Commit rimozione CDEmu non LIFO.")
-        updated = replace(session, resources=session.resources[:-1], removing_index=None, phase="cleanup")
+        updated = replace(
+            session,
+            resources=session.resources[:-1],
+            removing_index=None,
+            phase="cleanup",
+        )
         self._write(updated)
         return updated
 
@@ -524,29 +613,49 @@ def _loaded_matches(resource: OwnedDevice, loaded: bool, filenames: tuple[str, .
     return len(filenames) == 1 and _canonical_text(filenames[0]) == resource.image
 
 
-def _validate_resource(resource: OwnedDevice, cdemu: CDEmuLike,
-                       mount_info: Callable[[str], tuple[str | None, bool]],
-                       validate_optical: Callable[[str], str]) -> tuple[bool, tuple[str, ...], str | None, bool]:
+def _validate_resource(
+    resource: OwnedDevice,
+    cdemu: CDEmuLike,
+    mount_info: Callable[[str], tuple[str | None, bool]],
+    validate_optical: Callable[[str], str],
+) -> tuple[bool, tuple[str, ...], str | None, bool]:
     mapped_sr, mapped_sg = cdemu.mapping(resource.index)
     if mapped_sr != resource.sr:
-        raise CDEmuOwnershipError(f"Device #{resource.index}: mapping sr cambiato {resource.sr} → {mapped_sr}.")
-    if resource.sg and mapped_sg != resource.sg:
-        raise CDEmuOwnershipError(f"Device #{resource.index}: mapping sg cambiato {resource.sg} → {mapped_sg}.")
+        raise CDEmuOwnershipError(
+            f"Device #{resource.index}: mapping sr cambiato {resource.sr} → {mapped_sr}."
+        )
+    if mapped_sg != resource.sg:
+        raise CDEmuOwnershipError(
+            f"Device #{resource.index}: mapping sg cambiato {resource.sg} → {mapped_sg}."
+        )
     if block_rdev(resource.sr) != resource.rdev:
         raise CDEmuOwnershipError(f"Device #{resource.index}: rdev di {resource.sr} cambiato.")
     validate_optical(resource.sr)
     loaded, filenames = cdemu.status(resource.index)
     if not _loaded_matches(resource, loaded, filenames):
-        raise CDEmuOwnershipError(f"Device #{resource.index}: media/stato non corrisponde al journal ({filenames!r}).")
+        raise CDEmuOwnershipError(
+            f"Device #{resource.index}: media/stato non corrisponde al journal ({filenames!r})."
+        )
     target, ro = mount_info(resource.sr)
-    if target and (target != resource.mount or not ro):
-        raise CDEmuOwnershipError(f"Device #{resource.index}: mount inatteso/non-RO: {target!r}, ro={ro}.")
+    if target:
+        if not resource.mount:
+            raise CDEmuOwnershipError(
+                f"Device #{resource.index}: esiste un mount {target!r} ma il crash è avvenuto prima "
+                "che il journal potesse attribuirlo; cleanup automatico rifiutato."
+            )
+        if target != resource.mount or not ro:
+            raise CDEmuOwnershipError(
+                f"Device #{resource.index}: mount inatteso/non-RO: {target!r}, ro={ro}."
+            )
     return loaded, filenames, target, ro
 
 
-def _validate_suffix(session: OwnershipSession, cdemu: CDEmuLike,
-                     mount_info: Callable[[str], tuple[str | None, bool]],
-                     validate_optical: Callable[[str], str]) -> None:
+def _validate_suffix(
+    session: OwnershipSession,
+    cdemu: CDEmuLike,
+    mount_info: Callable[[str], tuple[str | None, bool]],
+    validate_optical: Callable[[str], str],
+) -> None:
     expected = session.base_count + len(session.resources)
     current = cdemu.number_of_devices()
     if current != expected:
@@ -555,11 +664,16 @@ def _validate_suffix(session: OwnershipSession, cdemu: CDEmuLike,
         _validate_resource(resource, cdemu, mount_info, validate_optical)
 
 
-def cleanup_owned_session(store: CDEmuOwnershipStore, cdemu: CDEmuLike, *,
-                          mount_info: Callable[[str], tuple[str | None, bool]],
-                          unmount: Callable[[str], object],
-                          validate_optical: Callable[[str], str],
-                          stale_recovery: bool, sandbox_running: bool) -> CleanupResult:
+def cleanup_owned_session(
+    store: CDEmuOwnershipStore,
+    cdemu: CDEmuLike,
+    *,
+    mount_info: Callable[[str], tuple[str | None, bool]],
+    unmount: Callable[[str], object],
+    validate_optical: Callable[[str], str],
+    stale_recovery: bool,
+    sandbox_running: bool,
+) -> CleanupResult:
     """Remove only a fully proven RetroCD-owned suffix; caller holds session lock."""
     if not store.session_locked:
         raise CDEmuOwnershipError("Cleanup CDEmu senza lock di sessione.")
@@ -570,7 +684,11 @@ def cleanup_owned_session(store: CDEmuOwnershipStore, cdemu: CDEmuLike, *,
         return CleanupResult(True, False, ("nessun journal CDEmu da ripulire",))
     if session.boot_id != host_boot_id() or session.daemon_identity != cdemu.daemon_identity():
         store.clear()
-        return CleanupResult(True, True, ("journal CDEmu obsoleto: boot/daemon cambiato; nessun device corrente è stato toccato",))
+        return CleanupResult(
+            True,
+            True,
+            ("journal CDEmu obsoleto: boot/daemon cambiato; nessun device corrente è stato toccato",),
+        )
     if stale_recovery and session_owner_alive(session):
         raise CDEmuOwnershipBusy("Il processo proprietario registrato nel journal CDEmu è ancora attivo.")
 
@@ -596,6 +714,10 @@ def cleanup_owned_session(store: CDEmuOwnershipStore, cdemu: CDEmuLike, *,
             )
 
     if not session.resources:
+        if cdemu.number_of_devices() != session.base_count:
+            raise CDEmuOwnershipError(
+                "Journal CDEmu senza risorse ma device count diverso dalla baseline; non cancello l'evidenza."
+            )
         store.clear()
         return CleanupResult(True, False, ("journal CDEmu senza risorse residue: ripulito",))
 
@@ -610,22 +732,30 @@ def cleanup_owned_session(store: CDEmuOwnershipStore, cdemu: CDEmuLike, *,
         expected_count = session.base_count + len(session.resources)
         if cdemu.number_of_devices() != expected_count or resource.index != expected_count - 1:
             raise CDEmuOwnershipError("Cleanup CDEmu interrotto: il suffisso non è più quello atteso.")
-        loaded, _files, target, _ro = _validate_resource(resource, cdemu, mount_info, validate_optical)
+        loaded, _files, target, _ro = _validate_resource(
+            resource, cdemu, mount_info, validate_optical
+        )
         if target:
             unmount(resource.sr)
             after_target, _ = mount_info(resource.sr)
             if after_target:
-                raise CDEmuOwnershipError(f"Device #{resource.index}: unmount non confermato ({after_target}).")
+                raise CDEmuOwnershipError(
+                    f"Device #{resource.index}: unmount non confermato ({after_target})."
+                )
         if loaded:
             cdemu.unload(resource.index)
             loaded2, files2 = cdemu.wait_loaded(resource.index, False)
             if loaded2 or files2:
                 raise CDEmuOwnershipError(f"Device #{resource.index}: unload non confermato.")
         mapped_sr, mapped_sg = cdemu.mapping(resource.index)
-        if mapped_sr != resource.sr or (resource.sg and mapped_sg != resource.sg):
-            raise CDEmuOwnershipError(f"Device #{resource.index}: mapping cambiato prima di RemoveDevice.")
+        if mapped_sr != resource.sr or mapped_sg != resource.sg:
+            raise CDEmuOwnershipError(
+                f"Device #{resource.index}: mapping cambiato prima di RemoveDevice."
+            )
         if block_rdev(resource.sr) != resource.rdev:
-            raise CDEmuOwnershipError(f"Device #{resource.index}: rdev cambiato prima di RemoveDevice.")
+            raise CDEmuOwnershipError(
+                f"Device #{resource.index}: rdev cambiato prima di RemoveDevice."
+            )
         if cdemu.number_of_devices() != expected_count:
             raise CDEmuOwnershipError("Device count cambiato immediatamente prima di RemoveDevice.")
         store.set_removing(resource.index)
@@ -636,18 +766,40 @@ def cleanup_owned_session(store: CDEmuOwnershipStore, cdemu: CDEmuLike, *,
             if current == expected_count - 1:
                 break
             if current != expected_count:
-                raise CDEmuOwnershipError(f"Count CDEmu inatteso dopo RemoveDevice: {current}, atteso {expected_count - 1}.")
+                raise CDEmuOwnershipError(
+                    f"Count CDEmu inatteso dopo RemoveDevice: {current}, atteso {expected_count - 1}."
+                )
             time.sleep(0.05)
         else:
             raise CDEmuOwnershipError("Timeout confermando RemoveDevice CDEmu.")
         store.commit_removed(resource.index)
-        messages.append(f"device CDEmu owned #{resource.index} rimosso con ownership verificata")
+        messages.append(
+            f"device CDEmu owned #{resource.index} rimosso con ownership verificata"
+        )
+
+    final = store.load()
+    if final is None:
+        raise CDEmuOwnershipError("Journal CDEmu scomparso prima della verifica finale.")
+    if cdemu.number_of_devices() != final.base_count:
+        raise CDEmuOwnershipError(
+            f"Cleanup CDEmu terminato con count inatteso: {cdemu.number_of_devices()}, "
+            f"baseline={final.base_count}."
+        )
     store.clear()
     return CleanupResult(True, False, tuple(messages or ["cleanup CDEmu completato"]))
 
 
 __all__ = [
-    "CDEmuOwnershipBusy", "CDEmuOwnershipError", "CDEmuOwnershipStore", "CleanupResult",
-    "OwnedDevice", "OwnershipSession", "PendingDevice", "block_rdev", "cleanup_owned_session",
-    "host_boot_id", "process_start_ticks", "session_owner_alive",
+    "CDEmuOwnershipBusy",
+    "CDEmuOwnershipError",
+    "CDEmuOwnershipStore",
+    "CleanupResult",
+    "OwnedDevice",
+    "OwnershipSession",
+    "PendingDevice",
+    "block_rdev",
+    "cleanup_owned_session",
+    "host_boot_id",
+    "process_start_ticks",
+    "session_owner_alive",
 ]
