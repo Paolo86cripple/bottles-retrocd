@@ -14,6 +14,7 @@ This file is the persistent operational contract for humans and coding agents wo
 - Never force-update `main` merely to simplify history.
 - Packaging/release work still requires real-machine gates where specified; CI alone is not sufficient.
 - No automatic merge. Owner approval is required before merging non-trivial packaging/release/security-sensitive work.
+- For architecture, sandbox/security, compatibility, lifecycle/device ownership and release-critical work, use the **maximum reasoning and review effort available**. Optimize for correctness, evidence and compatibility rather than speed or brevity. Before declaring non-trivial work complete, perform a second-pass adversarial review of edge cases, failure modes, rollback/cleanup behavior, privilege or filesystem leaks, race conditions, and consistency between code, tests, docs and target-machine validation.
 
 ## Mission and scope
 
@@ -231,13 +232,16 @@ Completed gates:
 - real Discworld Noir Disc 1 CUE/BIN verification through the worker PASS with Redump `MATCH 1:1` and protection scanner completing direct raw/ISO reads without mount/execution;
 - GUI `Test verifica sandbox` PASS and GUI `Verifica + confronta scanner` PASS on the same image;
 - official Redump updater moved to a separate networked bubblewrap worker; successful target update rebuilt the live catalog to 1 catalog / 61096 games / 199394 ROM records;
-- immediate post-update Discworld Noir verification remained `MATCH 1:1`, proving download → staged catalog rebuild → atomic install → isolated verifier read path without archive regression;
+- CLI post-update Discworld Noir verification remained `MATCH 1:1`, proving download → staged catalog rebuild → atomic install → isolated verifier read path without archive regression;
+- GUI `Aggiorna Redump PC` PASS on the target system, followed immediately by GUI `Verifica + confronta scanner` PASS and Redump `MATCH 1:1` on Discworld Noir Disc 1;
 - CI at updater-boundary HEAD: 180/180 unit tests PASS plus Python syntax, shell syntax, Arch packaging syntax, release identity/metadata and unsafe dynamic-execution scan PASS.
 
 Still required before merge/release consideration:
 
-- exercise the official updater through the GUI path on the target system;
-- review/validate remaining 0.4.1 hardening items before deciding branch split/merge scope;
+- implement and target-validate CDEmu operation locking, ownership journal and safe stale-resource recovery without weakening current mapping/ownership checks;
+- perform evidence-led D-Bus/UNIX-socket/runtime-host exposure audit and remove only demonstrably unnecessary surfaces;
+- review host-helper FD/environment inheritance and apply narrow hygiene fixes where safe;
+- run the complete 0.4.1 real-machine regression and packaging/install/uninstall-preservation gates;
 - no automatic merge; owner approval remains required.
 
 ## Arch / CachyOS packaging contract
@@ -280,7 +284,7 @@ Packaging policy:
 1. **Native legacy optical DRM compatibility/emulation.** Investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP optical protections; reproduce original verification behavior via Wine/CDEmu/libMirage or compatible components; reuse license-compatible open source; No-CD/cracks are not the normal solution; keep optional/fail-closed without broader sandbox permissions.
 2. **Legacy DirectX compatibility layer/manager.** DxWrapper/dgVoodoo2-style DirectX 5–9 support, optional/OFF by default, after DRM work and before shaders.
 3. **libRashader + Slang shaders.** Optional/OFF by default per game/bottle after the compatibility foundation is stable.
-4. **Abnormal-termination recovery for live multidisc cache devices.** Recover safely without weakening device-ownership validation; this may be pulled into the active 0.4.1 hardening cycle if implemented conservatively.
+4. **Abnormal-termination recovery for live multidisc cache devices.** Recover safely without weakening device-ownership validation; this work is now being pulled into the active 0.4.1 hardening cycle together with explicit CDEmu ownership journaling/locking.
 
 Post-release maintenance backlog:
 
