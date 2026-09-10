@@ -248,7 +248,7 @@ Completed on target CachyOS on 2026-09-10.
 - Test Bubblejail from installed package: **PASS=17 FAIL=0 WARN=0**.
 - Historical local package `bottles-retro-cd-gui 0.3.0-1` was removed cleanly with no package-file overlap beyond common system directories and no orphans; final metadata declares `conflicts`/`replaces`.
 - Installed-package functional launch PASS using Discworld Noir Disc 1 with XWayland, network OFF, dedicated RX 9070 XT selected, two other GPUs hidden, GPU pre/post PASS, Retro Optical pre/post PASS, `/mnt/cdemu=RO`, CDEmu D-Bus/vhba/sg hidden, raw sr hidden by default, Xbox One S `event9 + js0`, `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`.
-- Live-session broad eject was correctly refused fail-closed; active device eject succeeded.
+- Live-session broad eject was correctly refused fail-closed; active-device eject succeeded.
 - Uninstall-preservation gate PASS: before/after comparison showed RetroCD config, Bubblejail instance/private HOME/prefix state and archive content unchanged after removing the package.
 
 ## Narrow final package gate for 0.4.0-3 — PASS
