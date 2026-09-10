@@ -1,0 +1,33 @@
+pkgbase = bottles-retrocd
+	pkgdesc = Hardened Bottles launcher for Windows retro CD/DVD games
+	pkgver = 0.4.0
+	pkgrel = 2
+	url = https://github.com/Paolo86cripple/bottles-retrocd
+	install = bottles-retrocd.install
+	arch = x86_64
+	license = GPL-3.0-or-later
+	makedepends = git
+	depends = python
+	depends = python-gobject
+	depends = gtk4
+	depends = bottles
+	depends = bubblejail
+	depends = cdemu-daemon
+	depends = libmirage
+	depends = udisks2
+	depends = vulkan-tools
+	depends = iproute2
+	depends = util-linux
+	optdepends = sudo: update CDEmu/libMirage components from the Componenti tab
+	conflicts = bottles-retro-cd-gui
+	replaces = bottles-retro-cd-gui
+	source = bottles-retrocd::git+https://github.com/Paolo86cripple/bottles-retrocd.git#commit=8c75163168164fef896041c6b1a62ddac19b3faf
+	source = bottles-retrocd-launcher
+	source = io.github.Paolo86cripple.BottlesRetroCD.desktop
+	source = io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml
+	sha256sums = SKIP
+	sha256sums = 0ea1cd6d1a8ecf4ce90e97ac67ec1fe629c579bcfb8000f8d0be7d0433a05c39
+	sha256sums = a1076b9bab5d8279e24f397a05e45094b004c791d5aa118d3ac38c84995c872f
+	sha256sums = c6c8a1619bfc4cb150b41aa6574d12c9f5572b917edea03161ca023f6c29a4c0
+
+pkgname = bottles-retrocd
