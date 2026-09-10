@@ -2,7 +2,7 @@
 
 ## Status
 
-The 0.4.0 feature set is frozen except for release blockers. The reviewed runtime architecture remains Bottles/Wine inside the existing Bubblejail instance, with host-side RetroCD controller/gamepad hotplug helper, CDEmu/libMirage and verifier components.
+The 0.4.0 feature set is frozen except for release blockers. The reviewed runtime architecture remains Bottles/Wine inside the existing Bubblejail instance, with host-side RetroCD controller/gamepad hotplug helpers, CDEmu/libMirage and verifier components.
 
 The pre-packaging review originally found three portability/documentation issues, all addressed on `review/pre-packaging-cleanup`:
 
@@ -16,16 +16,14 @@ The branch aligns runtime version/Application ID, CI module list and release doc
 
 ## Automated gate
 
-Current regression suite: **146 tests PASS** on the exact-node sysfs/udev hotplug implementation.
+Current regression suite: **151 tests PASS** on the exact-node sysfs/udev hotplug implementation.
 
 Additional gates:
 
-- Python syntax/bytecode compilation for every application module, explicitly including display/gamepad wrappers, `gamepad_hotplug.py` and `gamepad_ns_helper.py`: PASS on the implementation head;
+- Python syntax/bytecode compilation for every application module, explicitly including display/gamepad wrappers, `gamepad_hotplug.py`, `gamepad_ns_entry.py` and `gamepad_ns_helper.py`: PASS;
 - unit tests with `PYTHONWARNINGS=error::ResourceWarning`: PASS;
 - `bash -n run-local.sh`: PASS;
 - unsafe execution scan for `os.system`, `shell=True`, `eval` and dynamic `exec`: PASS.
-
-The final docs/reporting commits must keep branch CI green before merge.
 
 ## Archive-root portability review
 
@@ -45,7 +43,7 @@ The Bubblejail test creates a real temporary non-whitelisted host sentinel adjac
 
 ## Gamepad / hotplug review
 
-The standard controller path uses Bubblejail's built-in `[joystick]` service. The target Xbox One S controller has already passed the static isolation test with only `js0` + matching `event24` visible, both readable/writable, no unrelated input nodes, no `/dev/hidraw*`, and responding inputs.
+The standard controller path uses Bubblejail's built-in `[joystick]` service. The target Xbox One S controller has passed the static isolation test with only the current `jsX` + matching `eventX` visible, both readable/writable, no unrelated input nodes, no `/dev/hidraw*`, and responding inputs.
 
 RetroCD's hotplug extension keeps that surface narrow:
 
@@ -54,15 +52,16 @@ RetroCD's hotplug extension keeps that surface narrow:
 - after Bottles launch, the monitor watches only the fingerprint of those detected controller nodes;
 - initial activation is non-destructive, records/overlays the known-good static surface and reports `udev=initial-static` because no synthetic event is needed at jail startup;
 - a physical add/remove/reconnect rebuilds only the exact current device nodes and matching minimal sysfs subtree;
+- the namespace entry path discovers the user namespace that owns Bubblejail's mount namespace with Linux `NS_GET_USERNS`, prepares detached exact-node mounts in a private staging mount namespace and revalidates pinned device/sysfs identity before entering the active Bubblejail mount/network namespaces;
 - actual changes emit matching libudev remove/add notifications inside Bubblejail's network namespace for Wine/winebus and report `udev=notified`;
 - each reconciliation is re-probed from inside the already-running jail and must still show no unrelated input and no hidraw;
-- namespace/sysfs/udev failures are reported as `[FAIL] Gamepad hotplug`; there is no permissive fallback.
+- namespace/sysfs/udev failures are reported as `[FAIL] Gamepad hotplug`; there is no permissive fallback and no privilege elevation.
 
 Node numbers may change after reconnect, so acceptance compares against the current host-detected pair rather than assuming `event24` forever.
 
 Switch/gyro controllers requiring hidraw remain a deliberate non-goal for 0.4.0.
 
-**Remaining target-machine gamepad gate:** prove physical disconnect and reconnect while Bottles/Wine remains running, then confirm the controller becomes usable again in Wine/a game that supports runtime re-enumeration.
+**Target-machine gamepad gate: PASS.** On 2026-09-10, the revised broker passed initial activation with `event9 + js0`, `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`; physical disconnect reduced the surface to no gamepad nodes with `udev=notified`; reconnect without restarting Bottles restored `event9 + js0` with `sysfs=exact`, `udev=notified`, `hidraw=hidden`.
 
 ## Display / Bottles preference review
 
@@ -161,7 +160,7 @@ Packaging must preserve these requirements:
 
 ## Residual risks / deliberate non-goals
 
-1. GTK controller/gamepad hotplug helper, verifier, CDEmu and libMirage remain host-side processes with the user's permissions.
+1. GTK controller/gamepad hotplug helpers, verifier, CDEmu and libMirage remain host-side processes with the user's permissions.
 2. XML/ZIP/image parsing is bounded but still parses untrusted bytes using standard-library/native components.
 3. Protection scanning is heuristic evidence, not a complete copy-protection oracle.
 4. DAT authenticity relies on HTTPS + official-host allow-list and structural/index validation; there is no uniform detached signature mechanism in this implementation.
@@ -173,16 +172,16 @@ Packaging must preserve these requirements:
 
 ## Merge criterion
 
-Merge `review/pre-packaging-cleanup` only after:
+The gamepad items below are now target-validated. Merge `review/pre-packaging-cleanup` only after the remaining release checks are also confirmed:
 
 1. branch CI remains fully green;
 2. target config shows the correct migrated/current archive root without any dump modification;
 3. changing/reselecting the archive root from the GUI persists correctly;
 4. Sandbox vertical scrolling keeps every release control reachable;
-5. **Test gamepad** still proves only the exact standard controller nodes, readable, no unrelated `/dev/input` and no hidraw;
-6. first Bottles launch with gamepad ON reports hotplug PASS with `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`;
-7. physical controller disconnect while Bottles remains running reports PASS with no gamepad nodes left and `udev=notified`;
-8. reconnect without restarting Bottles reports PASS with exactly the new/current `jsX/eventX` nodes, `udev=notified`, no hidraw, and the controller is usable again where Wine/game runtime enumeration permits;
+5. **Test gamepad** proves only the exact standard controller nodes, readable, no unrelated `/dev/input` and no hidraw — **PASS**;
+6. first Bottles launch with gamepad ON reports hotplug PASS with `sysfs=exact`, `udev=initial-static`, `hidraw=hidden` — **PASS**;
+7. physical controller disconnect while Bottles remains running reports PASS with no gamepad nodes left and `udev=notified` — **PASS**;
+8. reconnect without restarting Bottles reports PASS with exactly the current `jsX/eventX` nodes, `udev=notified` and no hidraw — **PASS**;
 9. **Test Bubblejail** proves the real temporary non-whitelist sentinel is hidden;
 10. **Test CD → Bubblejail** passes using the real sentinel path;
 11. one normal Bottles launch still produces GPU pre/post + Retro Optical pre/post PASS lines;
