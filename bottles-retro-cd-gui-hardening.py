@@ -32,17 +32,12 @@ class Window(_game.Window):
     """Preserve the released game boundary while hardening host-side helpers."""
 
     def __init__(self, app):
-        # Base construction schedules initialize() via GLib.idle_add. Create the
-        # ownership store first so the virtual initialize override always sees it.
         self.cdemu_ownership = CDEmuOwnershipStore()
         super().__init__(app)
         self.verifier_sandbox = VerifierSandbox()
         self.updater_sandbox = VerifierUpdaterSandbox()
         self._install_verifier_sandbox_test()
 
-    # ------------------------------------------------------------------
-    # Verifier / updater boundaries already target-validated in 0.4.1.
-    # ------------------------------------------------------------------
     def _verifier_root(self) -> Path:
         root = getattr(self, "_archive_root", None)
         if not isinstance(root, Path) or not root.is_dir():
@@ -104,9 +99,6 @@ class Window(_game.Window):
         GLib.idle_add(self.verifier_result.set_text, result.text)
         return result.text
 
-    # ------------------------------------------------------------------
-    # CDEmu inter-process ownership and crash recovery.
-    # ------------------------------------------------------------------
     def _cleanup_owned_journal(self, *, stale_recovery: bool) -> tuple[str, ...]:
         if self.cdemu is None:
             raise CDEmuOwnershipError("CDEmu non connesso: ownership non verificabile.")
@@ -122,7 +114,6 @@ class Window(_game.Window):
         return result.messages
 
     def _recover_stale_cdemu_state(self) -> str:
-        """Recover a previous crashed session only after acquiring its released lock."""
         if self.cdemu is None or self.cdemu_ownership.session_locked:
             return ""
         self.cdemu_ownership.acquire_session_lock(timeout=0.25)
@@ -142,7 +133,6 @@ class Window(_game.Window):
 
     @contextmanager
     def _cdemu_operation(self):
-        """Serialize mutating CDEmu work and resolve stale ownership first."""
         if not self.cdemu_ownership.session_locked:
             self._recover_stale_cdemu_state()
         with self.cdemu_ownership.operation(timeout=2.0):
@@ -171,7 +161,7 @@ class Window(_game.Window):
         return result
 
     def _prepare_disc_cache(self, disc_set):
-        """Create a live multidisc cache with write-ahead ownership evidence."""
+        """Create a live multidisc cache with staged write-ahead ownership evidence."""
         if self.cdemu is None:
             raise RuntimeError("CDEmu non connesso.")
         if not disc_set.multidisc:
@@ -202,9 +192,18 @@ class Window(_game.Window):
                 self.cdemu_ownership.set_pending(index=expected_index, image=str(image))
                 index = self.cdemu.add_device()
                 if index != expected_index:
-                    raise CDEmuOwnershipError(f"AddDevice ha restituito #{index}, atteso esattamente #{expected_index}.")
+                    raise CDEmuOwnershipError(
+                        f"AddDevice ha restituito #{index}, atteso esattamente #{expected_index}."
+                    )
                 sr, sg = self.cdemu.wait_mapping(index)
                 self.validate_cdemu_optical_device(sr)
+
+                # Persist ownership immediately after mapping+rdev proof. A crash
+                # after this point can safely recover even before load/mount.
+                self.cdemu_ownership.commit_pending(
+                    OwnedDevice(index, str(image), sr, sg, "", block_rdev(sr))
+                )
+
                 self.cdemu.load(index, image)
                 loaded, filenames = self.cdemu.wait_loaded(index, True)
                 actual = tuple(str(Path(name).resolve(strict=False)) for name in filenames)
@@ -216,9 +215,10 @@ class Window(_game.Window):
                 mount = self.ensure_ro_mount(sr)
                 target, ro = self.mount_info(sr)
                 if not target or not ro or target != mount:
-                    raise CDEmuOwnershipError(f"Cache Disco {entry.number}: mount RO non verificato per {sr}.")
-                resource = OwnedDevice(index, str(image), sr, sg, mount, block_rdev(sr))
-                self.cdemu_ownership.commit_pending(resource)
+                    raise CDEmuOwnershipError(
+                        f"Cache Disco {entry.number}: mount RO non verificato per {sr}."
+                    )
+                self.cdemu_ownership.update_resource_mount(index, mount)
                 cache[self._disc_cache_key(image)] = (index, sr, mount)
 
             self.cdemu_ownership.activate()
@@ -235,7 +235,6 @@ class Window(_game.Window):
             raise RuntimeError(f"Preparazione cache CDEmu fallita: {primary}.{suffix}") from primary
 
     def _cleanup_disc_cache(self, cache, base_count):
-        """Replace RAM-only suffix cleanup with journal-authorized cleanup."""
         if not self.cdemu_ownership.session_locked:
             try:
                 self.cdemu_ownership.acquire_session_lock(timeout=0.25)
@@ -248,7 +247,9 @@ class Window(_game.Window):
                     return ["cache CDEmu presente senza journal ownership: RemoveDevice rifiutato"]
                 return []
             if base_count is not None and base_count != session.base_count:
-                return [f"base_count cache={base_count} diverso dal journal={session.base_count}: cleanup rifiutato"]
+                return [
+                    f"base_count cache={base_count} diverso dal journal={session.base_count}: cleanup rifiutato"
+                ]
             self._cleanup_owned_journal(stale_recovery=False)
             return []
         except Exception as exc:
@@ -265,7 +266,9 @@ class Window(_game.Window):
 
         if self.active_bridge is not None:
             self.active_bridge.stop()
-        warnings = self._cleanup_disc_cache(dict(self.active_bridge_cache), self.active_bridge_cache_base_count)
+        warnings = self._cleanup_disc_cache(
+            dict(self.active_bridge_cache), self.active_bridge_cache_base_count
+        )
         if warnings:
             return warnings
         self.active_bridge = None
@@ -275,8 +278,6 @@ class Window(_game.Window):
         self.active_bridge_cache_base_count = None
         return []
 
-    # Short non-live mutations use the same flock. The live path upgrades to a
-    # persistent lease before creating its first appended cache device.
     def swap_to_image(self, image: Path):
         with self._cdemu_operation():
             return super().swap_to_image(image)
@@ -298,16 +299,15 @@ class Window(_game.Window):
             return super().run_integration_test()
 
     def eject_all_retrocd_media(self):
-        # Parent eject-all cleans a live cache first, which intentionally ends
-        # the persistent lease. Split the operation so the remaining unloads
-        # are then covered by a fresh short lock rather than running unlocked.
         if self.sandbox.running():
             return super().eject_all_retrocd_media()
         had_cache = bool(self.active_bridge_cache)
         if had_cache:
             notes = self._cleanup_inactive_live_session()
             if notes:
-                raise CDEmuOwnershipError("Espelli tutto: cleanup cache ownership non completato: " + "; ".join(notes))
+                raise CDEmuOwnershipError(
+                    "Espelli tutto: cleanup cache ownership non completato: " + "; ".join(notes)
+                )
         with self._cdemu_operation():
             text = super().eject_all_retrocd_media()
         if had_cache:
@@ -320,8 +320,6 @@ class Window(_game.Window):
             with self._cdemu_operation():
                 return super().launch_bottles()
 
-        # Hold the same lease through preparation, the entire live game session
-        # and final cache cleanup. O_CLOEXEC prevents leaking it into Bottles.
         self.cdemu_ownership.acquire_session_lock(timeout=2.0)
         try:
             if self.cdemu_ownership.load() is not None:
@@ -335,10 +333,14 @@ class Window(_game.Window):
     def _runtime_update_preflight(self):
         super()._runtime_update_preflight()
         if self.cdemu_ownership.session_locked:
-            raise CDEmuOwnershipError("Sessione ownership CDEmu ancora attiva: aggiornamento componenti rifiutato.")
+            raise CDEmuOwnershipError(
+                "Sessione ownership CDEmu ancora attiva: aggiornamento componenti rifiutato."
+            )
         with self.cdemu_ownership.operation(timeout=0.25):
             if self.cdemu_ownership.load() is not None:
-                raise CDEmuOwnershipError("Journal CDEmu non risolto: aggiornamento componenti rifiutato.")
+                raise CDEmuOwnershipError(
+                    "Journal CDEmu non risolto: aggiornamento componenti rifiutato."
+                )
 
     def on_close_request(self, *args):
         blocked = super().on_close_request(*args)
