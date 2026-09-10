@@ -28,6 +28,7 @@ jobs:
           display_backend.py
           gamepad_backend.py
           gamepad_hotplug.py
+          gamepad_ns_entry.py
           gamepad_ns_helper.py
           gpu_backend.py
           multidisc_backend.py
