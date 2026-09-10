@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Bottles RetroCD
+Comment=Run Windows retro CD/DVD games inside a hardened Bottles sandbox
+Exec=bottles-retrocd
+TryExec=bottles-retrocd
+Icon=media-optical
+Terminal=false
+StartupNotify=true
+Categories=Game;Utility;
+Keywords=Bottles;Wine;CDEmu;Retro;CD;DVD;Windows;

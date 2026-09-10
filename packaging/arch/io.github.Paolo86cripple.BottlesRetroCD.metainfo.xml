@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Paolo86cripple.BottlesRetroCD</id>
+  <name>Bottles RetroCD</name>
+  <summary>Run Windows retro CD/DVD games inside a hardened Bottles sandbox</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      Bottles RetroCD is a GTK4 controller for running legacy Windows PC games
+      through native Bottles inside a dedicated Bubblejail instance, with
+      CDEmu/UDisks2 optical-media integration and read-only Redump/TOSEC
+      verification workflows.
+    </p>
+    <p>
+      The 0.4.0 release uses deny-by-default host exposure, transient networking,
+      strict selected-GPU isolation, verified read-only optical mounts and
+      exact-node standard gamepad handling.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.Paolo86cripple.BottlesRetroCD.desktop</launchable>
+  <provides>
+    <binary>bottles-retrocd</binary>
+  </provides>
+  <url type="homepage">https://github.com/Paolo86cripple/bottles-retrocd</url>
+  <url type="bugtracker">https://github.com/Paolo86cripple/bottles-retrocd/issues</url>
+  <releases>
+    <release version="0.4.0" date="2026-09-10"/>
+  </releases>
+</component>
