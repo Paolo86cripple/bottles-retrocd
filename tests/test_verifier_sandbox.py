@@ -61,6 +61,18 @@ class VerifierSandboxPolicyTests(unittest.TestCase):
         self.assertNotIn("/sys", args)
         self.assertNotIn("/run", args)
 
+    def test_command_recreates_arch_loader_symlinks(self):
+        app, data, cache = self._layout()
+        args = vs._sandbox_command(
+            self.archive.resolve(),
+            bwrap="/usr/bin/bwrap",
+            app_dir=app.resolve(),
+            data_dir=data.resolve(),
+            cache_dir=cache.resolve(),
+        )
+        self.assertIn(("--symlink", "usr/lib", "/lib"), tuple(zip(args, args[1:], args[2:])))
+        self.assertIn(("--symlink", "usr/lib", "/lib64"), tuple(zip(args, args[1:], args[2:])))
+
     def test_command_exposes_only_exact_archive_and_state_modes(self):
         app, data, cache = self._layout()
         archive = self.archive.resolve()
@@ -199,6 +211,35 @@ class VerifierSandboxPolicyTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(vs.VerifierSandboxError, "denied"):
                 client.verify(self.image, self.archive)
+
+    def test_attestation_schema_accepts_strict_surface(self):
+        result = vs.SandboxAttestation(
+            archive_read_only=True,
+            app_read_only=True,
+            catalog_read_only=True,
+            cache_writable=True,
+            home_sentinel_hidden=True,
+            interfaces=("lo",),
+            proc_hidden=True,
+            sys_hidden=True,
+            run_hidden=True,
+        )
+        self.assertTrue(result.ok)
+        self.assertIn("[PASS]", result.format())
+
+    def test_attestation_rejects_non_loopback_interface(self):
+        result = vs.SandboxAttestation(
+            archive_read_only=True,
+            app_read_only=True,
+            catalog_read_only=True,
+            cache_writable=True,
+            home_sentinel_hidden=True,
+            interfaces=("lo", "wlan0"),
+            proc_hidden=True,
+            sys_hidden=True,
+            run_hidden=True,
+        )
+        self.assertFalse(result.ok)
 
     def test_worker_rejects_path_escape_independently(self):
         outside = self.root / "outside-worker.bin"
