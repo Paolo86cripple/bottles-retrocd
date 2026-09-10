@@ -28,6 +28,7 @@ First stable Bottles RetroCD release candidate.
 - dynamic reconciliation passes only validated gamepad device FDs, recreates the matching minimal sysfs subtree and re-probes the jail after each change;
 - initial activation is non-destructive and reports `udev=initial-static` because Wine starts with the existing static Bubblejail joystick surface;
 - actual disconnect/reconnect emits matching libudev remove/add notifications inside Bubblejail's network namespace for Wine/winebus and reports `udev=notified`;
+- the namespace broker discovers the user namespace that owns Bubblejail's mount namespace with Linux `NS_GET_USERNS`, stages detached exact-node mounts in a private mount namespace, revalidates pinned device/sysfs identity, then enters the active mount/network namespaces;
 - node numbering is not assumed stable across reconnect; the accepted surface is always compared with the current host-detected controller nodes;
 - any namespace/sysfs/udev/isolation failure reports `[FAIL] Gamepad hotplug`; there is no permissive fallback;
 - `/dev/hidraw*` remains excluded and Switch/gyro hidraw support is deliberately out of scope for 0.4.0.
@@ -81,15 +82,15 @@ First stable Bottles RetroCD release candidate.
 - seven tabs: CDEmu, Sandbox, Whitelist, Avanzate, Test, Verifica and Componenti;
 - Sandbox includes archive root, GPU, transient permissions, persistent display backend, gamepad controls and a vertical scroller;
 - cumulative application log records normal operations, security probes and gamepad hotplug transitions; **Pulisci log** clears only the visible in-memory buffer;
-- CI explicitly compiles the display/gamepad wrapper, hotplug monitor and namespace helper together with all other Python modules.
+- CI explicitly compiles the display/gamepad wrapper, hotplug monitor, namespace entry helper and namespace mount/udev helper together with all other Python modules.
 
 ### Validation
 
 - target-machine validation completed for both AMD GPUs, CDEmu/UDisks2, raw optical, explicit `/dev/sgX`, multidisc, verifier/source immutability, lifecycle/update negative paths, preference persistence, Wayland and XWayland;
 - Discworld Noir validated with `proton-cachyos-native` + D7VK; XWayland enters fullscreen directly while preserving audio and the existing sandbox/optical policy;
-- Xbox One S static Bubblejail controller path validated with only `js0` + matching `event24`, readable/writable, no unrelated input or hidraw exposure, and responding inputs;
-- exact-node gamepad hotplug/sysfs/udev implementation is covered by the automated suite and awaits final physical disconnect/reconnect target validation before merge;
-- final pre-packaging regression suite: **146 tests PASS** on the hotplug implementation, plus Python compilation, `ResourceWarning`-as-error, shell syntax and unsafe dynamic execution scan.
+- Xbox One S static Bubblejail controller path validated with only the current `jsX` + matching `eventX`, readable/writable, no unrelated input or hidraw exposure, and responding inputs;
+- exact-node gamepad hotplug physically validated on CachyOS: initial `event9 + js0` with `udev=initial-static`, physical disconnect to an empty exact surface with `udev=notified`, and reconnect without restarting Bottles restoring `event9 + js0` with `udev=notified`; every stage reported `sysfs=exact` and `hidraw=hidden`;
+- final pre-packaging regression suite: **151 tests PASS** on the hotplug implementation, plus Python compilation, `ResourceWarning`-as-error, shell syntax and unsafe dynamic execution scan.
 
 ## 0.4.0-rc2
 
