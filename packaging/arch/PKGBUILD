@@ -2,7 +2,7 @@
 
 pkgname=bottles-retrocd
 pkgver=0.4.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Hardened Bottles launcher for Windows retro CD/DVD games'
 arch=('x86_64')
 url='https://github.com/Paolo86cripple/bottles-retrocd'
@@ -23,6 +23,8 @@ depends=(
 optdepends=(
   'sudo: update CDEmu/libMirage components from the Componenti tab'
 )
+conflicts=('bottles-retro-cd-gui')
+replaces=('bottles-retro-cd-gui')
 makedepends=('git')
 install='bottles-retrocd.install'
 
