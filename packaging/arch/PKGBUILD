@@ -2,7 +2,7 @@
 
 pkgname=bottles-retrocd
 pkgver=0.4.0
-pkgrel=2
+pkgrel=3
 pkgdesc='Hardened Bottles launcher for Windows retro CD/DVD games'
 arch=('x86_64')
 url='https://github.com/Paolo86cripple/bottles-retrocd'
@@ -28,8 +28,8 @@ replaces=('bottles-retro-cd-gui')
 makedepends=('git')
 install='bottles-retrocd.install'
 
-# Exact runtime source that passed the 0.4.0 pre-packaging security/compatibility gate.
-_commit='8c75163168164fef896041c6b1a62ddac19b3faf'
+# Exact release-candidate source: reviewed 0.4.0 runtime plus the final identity-only fix.
+_commit='122460692d0c19650d663a77288b1c489851cd44'
 
 source=(
   "$pkgname::git+$url.git#commit=$_commit"
