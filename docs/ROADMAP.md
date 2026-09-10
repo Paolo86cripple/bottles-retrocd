@@ -1,44 +1,27 @@
 # Bottles RetroCD roadmap
 
-This roadmap records the current agreed order of work. Security-sensitive steps are not considered complete until branch CI and the relevant target-machine tests pass.
+The 0.4.0 feature set is frozen. The final real-machine pre-packaging gate and final PR security review are complete; no additional feature work belongs in 0.4.0 before packaging.
 
-1. **Persistent configuration/profiles** — complete and regression-reviewed.
-2. **GPU selector and strict DRM/Vulkan isolation** — complete and target-machine validated on both the Ryzen 7 9800X3D iGPU and Radeon RX 9070 XT dGPU; marker parsing received additional regression hardening during the Point-5 review.
-3. **Multidisc and live disc swapping** — complete and target-machine validated, including Discworld Noir live swapping and cache cleanup.
-4. **Redump/TOSEC verifier and protection scanner** — complete and target-machine validated, including source immutability and IBM-PC-only TOSEC materialization.
-5. **Retro Optical / CDEmu + libMirage hardening and lifecycle** — complete and target-machine validated.
-   - formal host/jail trust boundary;
-   - exact-policy fail-closed **pre-launch** proof plus independent **post-launch** proof for VHBA, CDEmu D-Bus, optical nodes and RO mount;
-   - verified no-CD, RO mount, exact `/dev/srX`, explicit advanced `/dev/sgX`, live multidisc and cleanup flows;
-   - safe single-disc and multidisc eject/cleanup, including **Espelli tutto** limited to RetroCD-managed media;
-   - component/version diagnostics with effective VHBA-provider detection, including kernel-bundled `linux-cachyos` VHBA;
-   - safe Arch/CachyOS full-system update flow with explicit preview, terminal confirmation and post-update health check.
-6. **Point 5 review gate** — complete, PASS.
-   - complete diff review against `main` and full CI/static checks passed;
-   - target-machine acceptance passed for no-CD, exact raw optical policy, live multidisc, cleanup and both integrated/discrete GPU paths;
-   - RO-only path was independently target-validated before the final preflight hardening and remains covered by the exact-policy probe/unit suite;
-   - explicit `/dev/sgX` advanced path target-tested successfully;
-   - lifecycle manager, updater negative paths and `Espelli tutto` target-tested successfully;
-   - GTK/main-thread safety, GPU isolation, network-OFF, whitelist, persistent settings and verifier/source-immutability invariants regression-reviewed.
-7. **dgVoodoo2 manager** — next active point, before packaging.
-   - per-game/bottle installation rather than global DLL replacement;
-   - controlled DirectX/Glide wrapper selection;
-   - backup/restore of replaced files;
-   - version/configuration visibility;
-   - no weakening of the Bubblejail boundary.
-8. **Arch/CachyOS packaging** — install/remove RetroCD cleanly and integrate required host components without duplicating privileged infrastructure.
-9. **Release hardening and polish** — final regression review, documentation, packaging/release artifacts and target-machine acceptance pass.
-10. **Optional libRashader + Slang shader integration for Windows games through Bottles** — future post-release point, to begin only after the libRashader integration in the AGS launcher is complete, stable and well understood.
-   - **completely optional and disabled by default**: with the feature OFF, the Windows-game launch path must remain behaviorally equivalent to the validated non-shader path;
-   - reuse the architectural lessons and proven integration strategy from the AGS launcher instead of developing a second experimental shader stack in parallel;
-   - per-game/per-bottle enablement and shader selection, never a mandatory global Wine/Bottles setting;
-   - support managed Slang shaders/presets and chains with explicit validation before launch;
-   - clean enable/disable/restore semantics with no permanent modification of original game files when avoidable;
-   - fail safely: shader initialization or preset failure must never require weakening Bubblejail, exposing extra host resources, or making the game dependent on libRashader to launch normally;
-   - preserve the existing strict GPU selection/isolation model and test both integrated and discrete GPU paths;
-   - keep shader assets/configuration separate from archival game media and from Redump/TOSEC verification inputs;
-   - dedicated compatibility/performance regression matrix before declaring the feature stable.
+1. Persistent configuration/profiles — complete and target validated, including schema-2 `archive_root` persistence and dump immutability.
+2. GPU selector and strict DRM/Vulkan isolation — complete and target validated on both AMD GPU paths.
+3. Multidisc and live disc swapping — complete and target validated.
+4. Redump/TOSEC verifier and protection scanner — complete and target validated with source immutability.
+5. Retro Optical / CDEmu + libMirage lifecycle — complete and target validated.
+6. Display and preference persistence — complete and target validated: Auto, native Wayland, XWayland and isolated GSettings keyfile persistence.
+7. Standard gamepad exact-node isolation and physical hotplug — complete and target validated with `sysfs=exact`, correct initial/change udev semantics and `hidraw=hidden`.
+8. 0.4.0 pre-packaging review — **PASS**: 151 tests, CI green, real archive/sentinel/RO checks PASS, resize/scroll PASS, final XWayland Discworld Noir launch PASS with GPU + Retro Optical pre/post proof.
+9. Arch/CachyOS packaging — immediate next step after PR #3 merge. Install only package-owned files, provide desktop integration and correct dependencies, and preserve user config/archive/Bubblejail data on normal removal.
+10. 0.4.0 release — installed-package acceptance, release hardening, final regression, tag and GitHub release.
+
+## Post-release priorities
+
+1. **Native legacy optical DRM compatibility/emulation** — first post-release-hardening compatibility objective. Investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP-era optical protections; reproduce the original media/protection behavior as natively as practical through Wine/CDEmu/libMirage or dedicated compatible components; study and reuse existing open-source projects when technically appropriate and license-compatible. A No-CD/cracked executable must not become the normal solution. Backends remain optional/fail-closed and must not broaden Bubblejail or optical permissions merely to work.
+2. **Legacy DirectX compatibility managers** — evaluate/integrate DxWrapper/dgVoodoo2-style support for DirectX 5–9-era titles, optional and OFF by default, after release hardening and after the DRM compatibility objective above.
+3. **libRashader + Slang shaders** — optional, per game/bottle and OFF by default, after the compatibility foundation is stable.
+4. **Abnormal-termination recovery for live multidisc cache devices** — recover safely without weakening device-ownership validation.
+
+None of the post-release features may weaken the validated Bubblejail boundary or become mandatory for ordinary launch paths without a concrete reviewed reason.
 
 ## Scope reminder
 
-The project remains focused on Windows retro PC games. Modern-game support is deliberately narrow: official single-player offline titles may use the same generic Bottles/Bubblejail sandbox, without expanding the architecture around launchers, online services, anti-cheat or unofficial repacks.
+Bottles RetroCD remains focused on Windows retro PC games. DOS uses DOSBox-Staging; ScummVM, console emulation and Steam management remain outside this architecture.

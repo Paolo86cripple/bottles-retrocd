@@ -1,4 +1,4 @@
-Bottles Retro CD GUI 0.4.0-rc2
+Bottles RetroCD 0.4.0
 
 The CDEmu D-Bus backend uses interface names, method signatures, signal names and
 client design patterns adapted from gCDEmu 3.3.1:
@@ -6,5 +6,5 @@ client design patterns adapted from gCDEmu 3.3.1:
   https://github.com/cdemu/cdemu/tree/master/gcdemu
   License: GNU GPL v2 or later
 
-This test bundle is distributed under GNU GPL v3 or later. GPL-2.0-or-later
+Bottles RetroCD is distributed under GNU GPL v3 or later. GPL-2.0-or-later
 material may be redistributed under GPLv3.

@@ -3,7 +3,7 @@ set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 fail=0
-for cmd in python3 cdemu bubblejail findmnt ip; do
+for cmd in python3 bubblejail findmnt ip vulkaninfo; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         printf 'Manca il comando richiesto: %s\n' "$cmd" >&2
         fail=1
@@ -27,7 +27,7 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 if ! command -v udisksctl >/dev/null 2>&1; then
-    printf 'Nota: udisksctl non trovato; i test UDisks2 dovranno essere disattivati.\n' >&2
+    printf 'Nota: udisksctl non trovato; mount RO UDisks2 e multidisco live non saranno disponibili.\n' >&2
 fi
 
-exec python3 "$HERE/bottles-retro-cd-gui-lifecycle.py" "$@"
+exec python3 "$HERE/bottles-retro-cd-gui-gamepad.py" "$@"

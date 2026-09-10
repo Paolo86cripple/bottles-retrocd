@@ -18,12 +18,18 @@ jobs:
           bottles-retro-cd-gui.py
           bottles-retro-cd-gui-base.py
           bottles-retro-cd-gui-lifecycle.py
+          bottles-retro-cd-gui-gamepad.py
           cdemu_backend.py
           cdemu_lifecycle.py
           cdemu_lifecycle_cli.py
           cdemu_update_cli.py
           disc_bridge.py
           disc_sets_backend.py
+          display_backend.py
+          gamepad_backend.py
+          gamepad_hotplug.py
+          gamepad_ns_entry.py
+          gamepad_ns_helper.py
           gpu_backend.py
           multidisc_backend.py
           protection_scanner.py
