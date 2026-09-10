@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import stat
 import struct
 import unittest
 from types import SimpleNamespace
