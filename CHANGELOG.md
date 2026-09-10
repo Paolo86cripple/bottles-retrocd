@@ -2,7 +2,21 @@
 
 ## 0.4.0
 
-First stable Bottles RetroCD release candidate.
+First stable Bottles RetroCD release, published on 2026-09-10.
+
+Release tag: `0.4.0` → `15b1e0acc61d61978051d49d97bd17cb97efb348`.
+
+Official Arch/CachyOS binary package: `bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zst`.
+
+### Packaging / release
+
+- added native Arch/CachyOS packaging with tracked `PKGBUILD` and `.SRCINFO`;
+- package installs only application-owned files under `/usr` and preserves RetroCD configuration, Bubblejail private HOME/instance, prefixes and archive on normal removal;
+- historical local package `bottles-retro-cd-gui` is migrated via explicit `conflicts`/`replaces` metadata;
+- final package build/upgrade passed 151/151 tests and `pacman -Qkk` reported 53 files / 0 altered files;
+- final release review corrected the GTK application identity to `io.github.Paolo86cripple.BottlesRetroCD` and stable version `0.4.0` without changing sandbox/device policy;
+- installed-package Bubblejail, Discworld Noir, GPU, Retro Optical, XWayland, gamepad and uninstall-preservation gates passed on target CachyOS;
+- PR #4 merged to `main`, post-merge CI passed, and the annotated `0.4.0` tag was published against the reviewed merge commit.
 
 ### Sandbox / launch hardening
 
