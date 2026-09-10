@@ -90,8 +90,7 @@ if proc is not None:
                 bounded_append("system_names", name)
 
 # Introspection is a real method call to the dconf service, but is read-only.
-# Unlike Peer.Ping it is not used as a synthetic proxy response, so success is
-# evidence that the sandbox has effective TALK access to ca.desrt.dconf.
+# A successful reply therefore proves effective TALK access to ca.desrt.dconf.
 proc = run_gdbus([
     "call", "--session", "--dest", "ca.desrt.dconf",
     "--object-path", "/ca/desrt/dconf",
