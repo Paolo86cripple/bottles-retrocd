@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -55,6 +57,9 @@ class VerifierSandboxPolicyTests(unittest.TestCase):
         self.assertIn("--new-session", args)
         self.assertIn("--clearenv", args)
         self.assertNotIn("--share-net", args)
+        self.assertNotIn("--proc", args)
+        self.assertNotIn("/sys", args)
+        self.assertNotIn("/run", args)
 
     def test_command_exposes_only_exact_archive_and_state_modes(self):
         app, data, cache = self._layout()
@@ -102,6 +107,32 @@ class VerifierSandboxPolicyTests(unittest.TestCase):
         self.assertFalse(self._has_mount(args, "--bind", missing, missing))
         self.assertFalse(self._has_mount(args, "--ro-bind", missing, missing))
 
+    def test_rw_cache_may_not_overlap_archive(self):
+        app, data, _cache = self._layout()
+        with self.assertRaisesRegex(vs.VerifierSandboxError, "cache RW sovrapposta"):
+            vs._validate_mount_layout(
+                archive=self.archive.resolve(),
+                app_dir=app.resolve(),
+                data_dir=data.resolve(),
+                cache_dir=self.archive.resolve() / "cache",
+            )
+
+    def test_archive_may_not_overlap_application_code(self):
+        _app, data, cache = self._layout()
+        with self.assertRaisesRegex(vs.VerifierSandboxError, "archivio e codice"):
+            vs._validate_mount_layout(
+                archive=self.archive.resolve(),
+                app_dir=self.archive.resolve() / "code",
+                data_dir=data.resolve(),
+                cache_dir=cache.resolve(),
+            )
+
+    def test_private_cache_is_forced_to_0700(self):
+        cache = self.root / "new-cache"
+        result = vs._private_dir(cache)
+        self.assertEqual(stat.S_IMODE(result.stat().st_mode), 0o700)
+        self.assertEqual(result.stat().st_uid, os.getuid())
+
     def test_input_outside_archive_is_rejected_before_bwrap(self):
         outside = self.root / "outside.bin"
         outside.write_bytes(b"x")
@@ -113,6 +144,13 @@ class VerifierSandboxPolicyTests(unittest.TestCase):
         with mock.patch.object(vs.shutil, "which", return_value=None):
             with self.assertRaisesRegex(vs.VerifierSandboxError, "manca 'bwrap'"):
                 client._bwrap()
+
+    def test_group_writable_bwrap_is_rejected(self):
+        fake = self.root / "bwrap"
+        fake.write_text("#!/bin/sh\n", encoding="ascii")
+        fake.chmod(0o775)
+        with self.assertRaisesRegex(vs.VerifierSandboxError, "non trusted"):
+            vs._trusted_bwrap(str(fake))
 
     def test_unknown_operation_is_rejected_without_spawning(self):
         client = vs.VerifierSandbox(bwrap_path="/usr/bin/bwrap")
