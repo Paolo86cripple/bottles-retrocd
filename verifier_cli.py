@@ -4,8 +4,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from verifier_backend import CatalogIndex, import_dat_directory, update_official_source
+from verifier_backend import CatalogIndex, import_dat_directory
 from verifier_sandbox import VerifierSandbox
+from verifier_updater_sandbox import VerifierUpdaterSandbox
 
 
 def parser() -> argparse.ArgumentParser:
@@ -32,7 +33,7 @@ def parser() -> argparse.ArgumentParser:
     compare.add_argument("path", type=Path)
     compare.add_argument("--root", type=Path)
 
-    update = sub.add_parser("update", help="update an official DAT source")
+    update = sub.add_parser("update", help="update an official DAT source in the dedicated updater sandbox")
     update.add_argument("source", choices=("redump", "tosec"))
 
     imp = sub.add_parser("import", help="import local DAT/XML files under a separate source name")
@@ -72,20 +73,20 @@ def main(argv: list[str] | None = None) -> int:
         result = sandbox.verify_scan(args.path, _root_for(args.path, args.root))
         print(result.text)
         return 0 if result.matched else 2
-
-    # Catalog administration is intentionally still host-side in this first
-    # hardening step. Do not instantiate it for sandboxed read operations.
-    index = CatalogIndex()
-    if args.command == "stats":
-        stats = index.stats()
-        print(f"catalogs={stats['catalogs']} games={stats['games']} roms={stats['roms']}")
-        return 0
     if args.command == "update":
-        report = update_official_source(args.source, catalog=index)
+        report = VerifierUpdaterSandbox().update(args.source)
         print(
             f"{report.source}: dat={report.dat_files} games={report.games} "
             f"roms={report.roms} index={report.catalog_path}"
         )
+        return 0
+
+    # Stats and manual imports remain host-side for now. The official network
+    # updater above is a separate bwrap worker and never receives archive access.
+    index = CatalogIndex()
+    if args.command == "stats":
+        stats = index.stats()
+        print(f"catalogs={stats['catalogs']} games={stats['games']} roms={stats['roms']}")
         return 0
     if args.command == "import":
         report = import_dat_directory(args.source, args.directory, catalog=index)
