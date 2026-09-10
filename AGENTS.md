@@ -12,7 +12,8 @@ This file is the persistent project contract for humans and coding agents workin
 - Prefer focused changes over speculative refactors, especially near packaging/release.
 - Once a security-sensitive runtime path is CI-green and target-validated, do not refactor it for aesthetics immediately before release. Defer low-value cleanup unless it fixes a concrete risk/regression.
 - Never force-update `main` merely to simplify history.
-- Do not merge packaging/release work merely because CI passes if required real-machine package acceptance is still open.
+- Do not merge packaging/release work merely because CI passes if required real-machine gates are still open.
+- No automatic merge. Owner approval is required before merging packaging/release work.
 
 ## Mission and scope
 
@@ -36,7 +37,7 @@ Out of scope unless a future concrete requirement changes the decision: DOS mana
 
 - Prefer original executables, original optical-media behavior and accurate compatibility/emulation over executable replacement.
 - A No-CD/cracked executable must **not** become the normal solution to legacy copy-protection compatibility.
-- Future legacy DRM work should reproduce/bypass obsolete optical-protection behavior as natively as practical through Wine/CDEmu/libMirage or dedicated compatible components.
+- Future legacy DRM work should reproduce obsolete optical-protection behavior as natively as practical through Wine/CDEmu/libMirage or dedicated compatible components.
 - Study/reuse existing open-source projects where technically appropriate and license-compatible instead of reinventing solved components.
 - Compatibility layers remain optional where possible and must not weaken Bubblejail merely for convenience.
 
@@ -44,15 +45,16 @@ Out of scope unless a future concrete requirement changes the decision: DOS mana
 
 - Stable app ID: `io.github.Paolo86cripple.BottlesRetroCD`.
 - Version: `0.4.0`.
-- PR #3 pre-packaging review was merged into `main` as `8c75163168164fef896041c6b1a62ddac19b3faf`.
-- Post-merge CI #339: SUCCESS.
+- Runtime reviewed merge commit: `8c75163168164fef896041c6b1a62ddac19b3faf`.
+- PR #3 pre-packaging review merged to `main`; post-merge CI #339 SUCCESS.
 - Final real-machine pre-packaging gate: PASS.
 - Final PR #3 diff/security review: PASS; no runtime/security blocker found.
-- Current work branch: `packaging/arch-cachyos-0.4.0`, created from the reviewed merge commit.
-- Packaging metadata/CI commits are green through CI #343.
-- First real CachyOS package build on 2026-09-10: **PASS**. `makepkg --cleanbuild --syncdeps` completed successfully, ran **151/151 tests PASS**, executed `package()`, packaging issue checks, `.PKGINFO/.BUILDINFO/.MTREE` generation and produced `bottles-retrocd 0.4.0-1`.
-- Next packaging gate: inspect the generated package metadata/file list before installation, then installed-package acceptance and uninstall-preservation tests.
-- 0.4.0 runtime feature scope is frozen. Do not add new runtime features before package acceptance/release.
+- Current work branch: `packaging/arch-cachyos-0.4.0`, created from the reviewed runtime merge commit.
+- 0.4.0 runtime feature scope is frozen. Do not add runtime features before release.
+- Final Arch/CachyOS package candidate: **`bottles-retrocd 0.4.0-2`**.
+- Legacy local package name `bottles-retro-cd-gui` is replaced/conflicted by the final package metadata.
+- `.SRCINFO` is tracked under `packaging/arch/` and must remain synchronized with `PKGBUILD`.
+- All required target packaging gates are now PASS. Remaining release sequence: final branch review, PR, explicit owner merge approval, verify `main` CI, then tag/release 0.4.0.
 
 ## Architectural baseline
 
@@ -64,7 +66,7 @@ Out of scope unless a future concrete requirement changes the decision: DOS mana
 - CDEmu is controlled through its D-Bus API model; `cdemu-client` is optional.
 - UDisks2 mount state must be verified, not inferred from command success.
 - Archive root is explicit persistent configuration; no release-time user-specific storage path may be hardcoded.
-- Local-tree entrypoint is `run-local.sh`, which launches `bottles-retro-cd-gui-gamepad.py`.
+- Local-tree entrypoint remains `run-local.sh`; installed entrypoint is `/usr/bin/bottles-retrocd`, which delegates to `/usr/lib/bottles-retrocd/run-local.sh`.
 
 ## Security invariants
 
@@ -87,7 +89,7 @@ Security regressions are release blockers.
 - Config path: `~/.config/bottles-retro-cd/` mode `0700`.
 - Sensitive files such as `config.toml`/`disc-sets.toml`: `0600`.
 - Schema 2 persists `gpu_pci`, `display_backend`, `archive_root`.
-- Existing target installs may migrate historical `/run/media/<user>/Data/Downloads/retropc` only if it exists; migration stores only the path and never moves/copies/renames/rewrites/touches archive data.
+- Existing target installs may migrate historical archive path only if it exists; migration stores only the path and never moves/copies/renames/rewrites/touches archive data.
 - New installs choose archive explicitly.
 - Config writes remain syntax-safe/atomic where applicable; persist stable identifiers, not volatile kernel numbering.
 
@@ -114,7 +116,7 @@ Security regressions are release blockers.
 - Validate PCI/vendor/device/driver plus DRM `cardN` and `renderD*`; selected paths must be live character devices.
 - Mask broad `/dev/dri` and bind back only selected card/render nodes.
 - Pre-launch proof: `DRI_PRIME`, selected nodes present, known non-selected nodes absent, exactly one Vulkan device, matching vendor/device identity.
-- Post-launch proof attaches to already-running Bubblejail via supported `bubblejail run --wait <instance> ...` path and re-proves effective selected-node/Vulkan isolation.
+- Post-launch proof attaches to already-running Bubblejail via supported path and re-proves effective selected-node/Vulkan isolation.
 - Missing proof markers are failure. Post-launch proof failure terminates the exact launch process group.
 - Manual Test Vulkan uses the same strict validator.
 - Do not hide additional GPU sysfs without concrete security value; avoid Mesa/udev compatibility regressions.
@@ -127,6 +129,7 @@ Security regressions are release blockers.
 - CDEmu D-Bus and `/dev/vhba_ctl` stay hidden from Bottles/Wine.
 - No broad storage-tree exposure for optical compatibility.
 - Lifecycle detects effective VHBA provider, including CachyOS kernel-provided VHBA, and must not duplicate privileged/kernel infrastructure.
+- During a live Bottles session, broad “eject all” operations are intentionally refused; use the validated active-device eject path.
 
 ### Standard gamepad / input
 
@@ -198,16 +201,17 @@ Scripts keep their declared interpreter; Bash syntax is valid inside a Bash `PKG
 
 ## 0.4.0 validation baseline
 
-Automated baseline before packaging:
+Automated/runtime baseline before packaging:
 
 - 151 unit tests PASS;
 - all application modules compile, including final GUI/gamepad namespace helpers;
 - `ResourceWarning`-as-error PASS;
 - shell syntax PASS;
 - forbidden dynamic-execution scan PASS;
-- PR #3 branch CI and post-merge `main` CI #339 green.
+- PR #3 branch CI and post-merge `main` CI #339 green;
+- final target security/compatibility gate PASS.
 
-Target baseline completed 2026-09-10:
+Target behavior validated before packaging included:
 
 - both AMD GPUs with pre/post DRM/Vulkan proof;
 - CDEmu/UDisks2 RO flow, optional exact raw `/dev/srX`, explicit `/dev/sgX`, multidisc cache/swap/cleanup;
@@ -215,26 +219,44 @@ Target baseline completed 2026-09-10:
 - network OFF baseline + temporary-network runner persistence;
 - Xbox One S exact static path and physical hotplug/reconnect;
 - schema-2 archive persistence + `0700`/`0600` config permissions + identical pre/post archive metadata signatures;
-- resize/vertical scroll all pages;
 - Test Bubblejail `PASS=17 FAIL=0 WARN=0` with real hidden sentinel;
-- Test CD → Bubblejail PASS with SCSI optical type 5, verified RO mount, two hidden real sentinels and cleanup;
-- final Discworld Noir XWayland launch PASS with GPU pre/post, Retro Optical pre/post `/mnt/cdemu=RO`, network OFF, game start/fullscreen/audio;
-- final gamepad initial proof `event9 + js0`, writable, `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`.
+- Test CD → Bubblejail PASS with SCSI optical type 5, verified RO mount, hidden real sentinels and cleanup.
+
+## Final Arch/CachyOS package acceptance — PASS
+
+Completed on target CachyOS on 2026-09-10.
+
+- All declared package dependencies present.
+- `makepkg --cleanbuild --syncdeps` completed successfully.
+- Local packaging source hashes passed.
+- `check()` executed **151/151 tests PASS**.
+- `package()` and packaging issue checks completed successfully.
+- Initial `0.4.0-1` package metadata/file-list inspection PASS; payload only under expected `/usr` paths.
+- Install script contains informational messages only and does not alter user state.
+- Installed package integrity: **53 total files, 0 altered files**.
+- Installed launcher resolved to `/usr/bin/bottles-retrocd` and successfully ran installed code under `/usr/lib/bottles-retrocd/`.
+- Test Bubblejail from installed package: **PASS=17 FAIL=0 WARN=0**.
+- Historical local package `bottles-retro-cd-gui 0.3.0-1` was removed cleanly with no package-file overlap beyond common system directories and no orphans; final metadata now declares `conflicts`/`replaces`.
+- Final package candidate is **`bottles-retrocd 0.4.0-2`**; pacman reports correct version/conflicts/replaces and **53 files, 0 altered files**.
+- Installed-package functional launch PASS using Discworld Noir Disc 1 with XWayland, network OFF, dedicated RX 9070 XT selected, two other GPUs hidden, GPU pre/post PASS, Retro Optical pre/post PASS, `/mnt/cdemu=RO`, CDEmu D-Bus/vhba/sg hidden, raw sr hidden by default, Xbox One S `event9 + js0`, `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`.
+- Live-session broad eject was correctly refused fail-closed; active device eject succeeded.
+- Uninstall-preservation gate PASS: before/after comparison showed RetroCD config, Bubblejail instance/private HOME/prefix state and archive content unchanged after removing the package.
+- `0.4.0-2` was reinstalled after the preservation test.
+- Packaging CI remains required on final branch head; `.SRCINFO` consistency is now CI-checked.
 
 ## Deferred non-blocking cleanup
 
-Do not touch these before 0.4.0 package acceptance unless a concrete regression appears:
+Do not touch these before 0.4.0 release unless a concrete regression appears:
 
 1. `gamepad_ns_helper.py` still contains older direct CLI/`mutate_instance()` code; runtime hotplug uses `gamepad_ns_entry.py`. Old path failed closed and is not a permissive fallback.
 2. CD-integration real-sentinel staging exists in both lifecycle and final wrapper layers; redundant but restrictive and target-tested.
 
 ## Arch / CachyOS packaging contract
 
-Current packaging branch: `packaging/arch-cachyos-0.4.0`.
-
 Packaging layout:
 
 - `packaging/arch/PKGBUILD` — package recipe;
+- `packaging/arch/.SRCINFO` — generated package metadata, tracked and kept synchronized with `PKGBUILD`;
 - `/usr/lib/bottles-retrocd/` — installed application Python modules and internal `run-local.sh`;
 - `/usr/bin/bottles-retrocd` — tiny launcher only;
 - `/usr/share/applications/io.github.Paolo86cripple.BottlesRetroCD.desktop` — desktop entry;
@@ -243,31 +265,31 @@ Packaging layout:
 
 Packaging source policy:
 
-- For the first 0.4.0 package, pin the installed runtime source to exact reviewed merge commit `8c75163168164fef896041c6b1a62ddac19b3faf`, not a moving branch.
-- Packaging-only commits may change recipe/metadata/docs/CI but must not silently change the runtime payload away from the reviewed commit.
+- For 0.4.0, installed runtime source is pinned to exact reviewed merge commit `8c75163168164fef896041c6b1a62ddac19b3faf`, not a moving branch.
+- Packaging-only commits may change recipe/metadata/docs/CI but must not silently change runtime payload away from the reviewed commit.
+- Final package metadata is `pkgver=0.4.0`, `pkgrel=2`.
+- `conflicts=('bottles-retro-cd-gui')` and `replaces=('bottles-retro-cd-gui')` are intentional migration metadata for the historical local package name.
 - No files may be installed under `/home`, `/run`, `/mnt`, `/media`, `/dev`, `/sys`, or user config/data locations.
 - Package install/remove scripts must never create/reset/delete Bubblejail instances, private HOME, prefixes, RetroCD config, archive, DAT catalog/cache or other user-owned content.
 - Uninstall removes only package-owned files under `/usr`; user state is intentionally preserved.
 
-Verified current dependency policy (2026-09-10):
+Verified dependency policy:
 
-- direct package dependencies: `python`, `python-gobject`, `gtk4`, `bottles`, `bubblejail`, `cdemu-daemon`, `libmirage`, `udisks2`, `vulkan-tools`, `iproute2`, `util-linux`;
-- on stock Arch, `bottles` and `bubblejail` are AUR packages; do not pretend they are official-repo packages;
-- `cdemu-daemon`, `libmirage`, `udisks2`, `vulkan-tools`, `python-gobject`, `gtk4`, `util-linux` are available in Arch repositories at packaging time;
-- do **not** add a direct dependency on `vhba-module` or `vhba-module-dkms`; CDEmu/distribution/kernel must satisfy the effective `VHBA-MODULE`, preserving CachyOS kernel-provided VHBA where applicable;
-- do **not** add `cdemu-client` as a hard dependency; RetroCD uses D-Bus directly;
-- `sudo` is optional and only enables the interactive Componenti full-system update action;
+- direct dependencies: `python`, `python-gobject`, `gtk4`, `bottles`, `bubblejail`, `cdemu-daemon`, `libmirage`, `udisks2`, `vulkan-tools`, `iproute2`, `util-linux`;
+- on stock Arch, `bottles` and `bubblejail` are AUR packages;
+- do **not** add direct dependency on `vhba-module` or `vhba-module-dkms`; CDEmu/distribution/kernel must satisfy effective `VHBA-MODULE`;
+- do **not** add `cdemu-client` as hard dependency; RetroCD uses D-Bus directly;
+- `sudo` is optional and only enables interactive Componenti full-system update;
 - no separate/broad gamepad dependency or permissions layer beyond Bubblejail `[joystick]`.
 
-Packaging validation:
+Packaging validation requirements:
 
-- packaging CI validates `PKGBUILD`, `.install`, launcher shell syntax, desktop/metainfo structure and local-source hashes without weakening the existing runtime CI;
-- **first target build PASS (2026-09-10):** all declared dependencies present, `makepkg --cleanbuild --syncdeps` succeeded, source hashes passed, **151/151 tests PASS**, `package()` and package issue checks completed, and `bottles-retrocd 0.4.0-1` was created;
-- inspect generated package file list/metadata before install;
-- install package and launch via `/usr/bin/bottles-retrocd` and desktop entry;
-- rerun a focused installed-package acceptance: GUI startup/config persistence, Bubblejail sentinel test, GPU/Retro Optical secured launch, Discworld Noir XWayland, gamepad initial exact-node proof;
-- explicitly test uninstall and prove config, Bubblejail instance/private HOME/prefixes and archive remain untouched; reinstall afterward if continuing release work;
-- do not tag/release 0.4.0 until package-installed acceptance and uninstall-preservation pass.
+- CI validates runtime compile/tests plus `PKGBUILD`, `.install`, launcher syntax, desktop/metainfo, local hashes and final `.SRCINFO` metadata;
+- target package build, file-list inspection, installed acceptance and uninstall-preservation are all PASS for 0.4.0-2;
+- do not alter runtime payload after those gates without reopening relevant validation;
+- after any package-metadata change, regenerate `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` and rerun CI;
+- merge packaging branch only after final review and explicit owner approval;
+- after merge, verify `main` CI before creating the 0.4.0 tag/release.
 
 ## Git / release workflow
 
@@ -275,8 +297,8 @@ Packaging validation:
 - Non-trivial work belongs on focused branches such as `packaging/arch-cachyos-0.4.0`.
 - Keep commits focused; compare branch with `main` before merge; no force-updates.
 - Do not commit generated `src/`, `pkg/`, built package archives, caches, private instance state, mounted media, DAT downloads or user-specific paths.
-- Merge packaging branch only after packaging CI + target package build/installed acceptance/uninstall preservation are green and owner approves.
-- After packaging merge, verify `main` CI, then tag/release 0.4.0.
+- Packaging branch must remain based on runtime merge commit `8c751631...` with no runtime-code delta.
+- Current release flow: final review → PR → owner approval → merge → `main` CI → tag/release 0.4.0.
 
 ## Post-release roadmap, agreed order
 
