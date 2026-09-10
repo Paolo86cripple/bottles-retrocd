@@ -178,6 +178,7 @@ Persistent `[network]` in `services.toml` is rejected. The GUI only enables Bott
 
 ## Post-0.4.0 roadmap
 
+- **Native legacy optical DRM compatibility/emulation** — first post-release-hardening objective. Detect and reproduce the original disc-verification behavior needed by legally obtained legacy media (for example SafeDisc/SecuROM-era checks) through Wine/CDEmu/libMirage-compatible mechanisms rather than treating a No-CD/cracked executable as the normal solution. Survey existing maintained or archival open-source projects and upstream Wine/CDEmu/libMirage work, reuse well-understood implementations where licensing permits, keep each protection backend optional and OFF by default, and preserve exact optical/sandbox isolation.
 - **Legacy DirectX compatibility managers** such as dgVoodoo2/DxWrapper, optional and OFF by default.
 - **libRashader + Slang shaders**, optional and OFF by default, after the base release is packaged and stable.
 - abnormal-termination recovery for live multidisc cache devices.
