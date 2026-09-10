@@ -13,6 +13,9 @@ def parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("stats", help="show catalog statistics")
 
+    sandbox_test = sub.add_parser("sandbox-test", help="prove the dedicated verifier sandbox boundary")
+    sandbox_test.add_argument("--root", type=Path, required=True)
+
     verify = sub.add_parser("verify", help="verify one descriptor/image in the dedicated sandbox")
     verify.add_argument("path", type=Path)
     verify.add_argument("--root", type=Path)
@@ -44,12 +47,11 @@ def _root_for(path: Path, root: Path | None) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    index = CatalogIndex()
     sandbox = VerifierSandbox()
 
-    if args.command == "stats":
-        stats = index.stats()
-        print(f"catalogs={stats['catalogs']} games={stats['games']} roms={stats['roms']}")
+    if args.command == "sandbox-test":
+        result = sandbox.attest(args.root)
+        print(result.format())
         return 0
     if args.command == "verify":
         result = sandbox.verify(args.path, _root_for(args.path, args.root))
@@ -70,6 +72,14 @@ def main(argv: list[str] | None = None) -> int:
         result = sandbox.verify_scan(args.path, _root_for(args.path, args.root))
         print(result.text)
         return 0 if result.matched else 2
+
+    # Catalog administration is intentionally still host-side in this first
+    # hardening step. Do not instantiate it for sandboxed read operations.
+    index = CatalogIndex()
+    if args.command == "stats":
+        stats = index.stats()
+        print(f"catalogs={stats['catalogs']} games={stats['games']} roms={stats['roms']}")
+        return 0
     if args.command == "update":
         report = update_official_source(args.source, catalog=index)
         print(
