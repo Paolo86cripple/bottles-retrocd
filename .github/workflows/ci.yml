@@ -19,6 +19,7 @@ jobs:
           bottles-retro-cd-gui-base.py
           bottles-retro-cd-gui-lifecycle.py
           bottles-retro-cd-gui-gamepad.py
+          bottles-retro-cd-gui-hardening.py
           cdemu_backend.py
           cdemu_lifecycle.py
           cdemu_lifecycle_cli.py
@@ -41,7 +42,9 @@ jobs:
           verifier_cli.py
           verifier_common.py
           verifier_hash.py
+          verifier_sandbox.py
           verifier_updates.py
+          verifier_worker.py
       - name: Unit tests
         env:
           PYTHONWARNINGS: error::ResourceWarning
@@ -86,6 +89,10 @@ jobs:
           ):
               if required not in final_entry:
                   raise SystemExit(f'missing final release identity: {required}')
+
+          hardened_entry = Path('run-local.sh').read_text(encoding='utf-8')
+          if 'bottles-retro-cd-gui-hardening.py' not in hardened_entry:
+              raise SystemExit('run-local.sh does not use hardened verifier entrypoint')
 
           expected = {
               'bottles-retrocd-launcher': '0ea1cd6d1a8ecf4ce90e97ac67ec1fe629c579bcfb8000f8d0be7d0433a05c39',
