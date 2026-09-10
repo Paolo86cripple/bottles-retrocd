@@ -80,7 +80,8 @@ class SandboxAttestation:
             f"app={'RO' if self.app_read_only else 'RW'} · catalog={catalog} · "
             f"cache={'RW' if self.cache_writable else 'non-RW'} · host-home-sentinel={home} · "
             f"net={interfaces} · proc={'hidden' if self.proc_hidden else 'visible'} · "
-            f"sys={'hidden' if self.sys_hidden else 'visible'} · run={'hidden' if self.run_hidden else 'visible'}"
+            f"sys={'hidden' if self.sys_hidden else 'visible'} · "
+            f"run-host={'hidden' if self.run_hidden else 'VISIBLE'}"
         )
 
 
@@ -263,6 +264,32 @@ def _host_home_sentinel(mounted: tuple[Path, ...]) -> Path | None:
     return None
 
 
+def _host_run_sentinels(mounted: tuple[Path, ...]) -> tuple[Path, ...]:
+    """Pick real host runtime paths that must stay absent from the worker.
+
+    `/run` itself may legitimately exist as a synthetic parent when an exact
+    authorised bind lives below `/run/media`.  What must never appear is host
+    runtime state such as the user runtime directory, systemd, udev or D-Bus.
+    """
+    candidates = (
+        Path(f"/run/user/{os.getuid()}"),
+        Path("/run/systemd"),
+        Path("/run/udev"),
+        Path("/run/dbus"),
+        Path("/run/NetworkManager"),
+    )
+    result: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        if any(_overlaps(resolved, item) for item in mounted):
+            continue
+        result.append(resolved)
+    return tuple(result)
+
+
 _PROBE_SCRIPT = r'''
 import json
 import os
@@ -289,6 +316,7 @@ finally:
         pass
 
 sentinel = req.get("home_sentinel")
+run_sentinels = req.get("run_sentinels") or []
 result = {
     "archive_read_only": is_ro(req["archive"]),
     "app_read_only": is_ro(req["app"]),
@@ -298,7 +326,7 @@ result = {
     "interfaces": sorted(name for _idx, name in socket.if_nameindex()),
     "proc_hidden": not Path("/proc").exists(),
     "sys_hidden": not Path("/sys").exists(),
-    "run_hidden": not Path("/run").exists(),
+    "run_hidden": bool(run_sentinels) and all(not Path(item).exists() for item in run_sentinels),
 }
 print(json.dumps(result, sort_keys=True))
 '''
@@ -358,7 +386,9 @@ class VerifierSandbox:
         separator = base.index("--")
         command = tuple(base[: separator + 1] + ["/usr/bin/python3", "-B", "-s", "-c", _PROBE_SCRIPT])
         data_present = data_dir.is_dir()
-        sentinel = _host_home_sentinel((archive, app_dir, data_dir, cache_dir))
+        mounted = (archive, app_dir, data_dir, cache_dir)
+        sentinel = _host_home_sentinel(mounted)
+        run_sentinels = _host_run_sentinels(mounted)
         request = {
             "archive": str(archive),
             "app": str(app_dir),
@@ -366,6 +396,7 @@ class VerifierSandbox:
             "data_present": data_present,
             "cache": str(cache_dir),
             "home_sentinel": str(sentinel) if sentinel is not None else None,
+            "run_sentinels": [str(path) for path in run_sentinels],
         }
         try:
             proc = subprocess.run(
