@@ -49,7 +49,9 @@ Out of scope unless a future concrete requirement changes the decision: DOS mana
 - Final real-machine pre-packaging gate: PASS.
 - Final PR #3 diff/security review: PASS; no runtime/security blocker found.
 - Current work branch: `packaging/arch-cachyos-0.4.0`, created from the reviewed merge commit.
-- Current packaging skeleton commit: `a888d7e59a6eca0fab67841045675d81ed1fea63`; packaging-metadata CI hardening follows on the same branch.
+- Packaging metadata/CI commits are green through CI #343.
+- First real CachyOS package build on 2026-09-10: **PASS**. `makepkg --cleanbuild --syncdeps` completed successfully, ran **151/151 tests PASS**, executed `package()`, packaging issue checks, `.PKGINFO/.BUILDINFO/.MTREE` generation and produced `bottles-retrocd 0.4.0-1`.
+- Next packaging gate: inspect the generated package metadata/file list before installation, then installed-package acceptance and uninstall-preservation tests.
 - 0.4.0 runtime feature scope is frozen. Do not add new runtime features before package acceptance/release.
 
 ## Architectural baseline
@@ -259,9 +261,9 @@ Verified current dependency policy (2026-09-10):
 
 Packaging validation:
 
-- packaging CI must validate `PKGBUILD`, `.install`, launcher shell syntax, desktop/metainfo structure and local-source hashes without weakening the existing runtime CI;
-- build with `makepkg` on target CachyOS after syncing the packaging branch;
-- inspect package file list/metadata before install;
+- packaging CI validates `PKGBUILD`, `.install`, launcher shell syntax, desktop/metainfo structure and local-source hashes without weakening the existing runtime CI;
+- **first target build PASS (2026-09-10):** all declared dependencies present, `makepkg --cleanbuild --syncdeps` succeeded, source hashes passed, **151/151 tests PASS**, `package()` and package issue checks completed, and `bottles-retrocd 0.4.0-1` was created;
+- inspect generated package file list/metadata before install;
 - install package and launch via `/usr/bin/bottles-retrocd` and desktop entry;
 - rerun a focused installed-package acceptance: GUI startup/config persistence, Bubblejail sentinel test, GPU/Retro Optical secured launch, Discworld Noir XWayland, gamepad initial exact-node proof;
 - explicitly test uninstall and prove config, Bubblejail instance/private HOME/prefixes and archive remain untouched; reinstall afterward if continuing release work;
