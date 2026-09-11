@@ -22,6 +22,7 @@ from runtime_bus_audit import (  # noqa: E402
 from runtime_proxy_policy import (  # noqa: E402
     format_proxy_policy,
     inspect_proxy_policy,
+    validate_profile_policy,
     validate_proxy_policy,
 )
 from runtime_sandbox_test_policy import normalize_sandbox_test_results  # noqa: E402
@@ -67,6 +68,11 @@ class Window(_hard.Window):
         warned = sum(1 for state, _, _ in results if state == "WARN")
         lines.append(f"\nRisultato sandbox: PASS={passed} FAIL={failed} WARN={warned}")
         return "\n".join(lines)
+
+    def launch_bottles(self):
+        """Refuse launch if the static Bubblejail D-Bus profile can expose host dconf."""
+        validate_profile_policy(self.sandbox.config())
+        return super().launch_bottles()
 
     def run_runtime_surface_audit(self) -> str:
         if not self.sandbox.running():
