@@ -29,8 +29,15 @@ class HardeningWrapperContractTests(unittest.TestCase):
         self.assertIn("Journal CDEmu non risolto prima dell'avvio non-live", source)
         self.assertNotIn("with self._cdemu_operation()", source)
 
-    def test_runtime_audit_does_not_override_launch_bottles(self):
-        self.assertIsNone(_window_method(RUNTIME_AUDIT, "launch_bottles"))
+    def test_runtime_audit_launch_override_is_only_static_dbus_guard(self):
+        method = _window_method(RUNTIME_AUDIT, "launch_bottles")
+        self.assertIsNotNone(method)
+        source = ast.unparse(method)
+        self.assertIn("validate_profile_policy(self.sandbox.config())", source)
+        self.assertIn("super().launch_bottles()", source)
+        self.assertNotIn("acquire_session_lock", source)
+        self.assertNotIn("release_session_lock", source)
+        self.assertNotIn("_cdemu_operation", source)
 
 
 if __name__ == "__main__":
