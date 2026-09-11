@@ -20,6 +20,29 @@ class RuntimeProxyPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "dconf_dbus"):
             rpp.profile_dbus_policy({"gnome_toolkit": {"dconf_dbus": "false"}})
 
+    def test_validate_profile_accepts_dconf_off_and_unrelated_raw_grant(self):
+        config = {
+            "gnome_toolkit": {"dconf_dbus": False},
+            "debug": {"raw_dbus_session_args": ["--talk=org.example.App"]},
+        }
+        self.assertIsNone(rpp.validate_profile_policy(config))
+
+    def test_validate_profile_rejects_dconf_service_toggle(self):
+        with self.assertRaisesRegex(RuntimeError, "gnome_toolkit.dconf_dbus=true"):
+            rpp.validate_profile_policy({"gnome_toolkit": {"dconf_dbus": True}})
+
+    def test_validate_profile_rejects_exact_and_wildcard_raw_dconf_grants(self):
+        for arg in (
+            "--talk=ca.desrt.dconf",
+            "--own=ca.desrt.dconf",
+            "--call=ca.desrt.*=org.freedesktop.DBus.Introspectable.Introspect@/ca/desrt/dconf",
+        ):
+            with self.subTest(arg=arg), self.assertRaisesRegex(RuntimeError, "raw D-Bus grant dconf"):
+                rpp.validate_profile_policy({
+                    "gnome_toolkit": {"dconf_dbus": False},
+                    "debug": {"raw_dbus_session_args": [arg]},
+                })
+
     def test_exact_and_wildcard_dconf_policy_are_detected(self):
         args = (
             "--filter",
