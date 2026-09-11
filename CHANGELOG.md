@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.4.1
+
+Compatibility-preserving hardening release candidate prepared on 2026-09-11. Publication, final package identity and tag remain pending until the packaging/install/uninstall acceptance gates pass.
+
+### Verifier / updater isolation
+
+- moved archive verification and protection scanning into a dedicated bubblewrap worker with archive/app/catalog read-only, only the hash cache writable, private HOME/tmp, loopback-only networking and no host `/proc`, `/sys` or runtime state;
+- added positive verifier sandbox attestation and fail-closed path/layout checks;
+- moved official Redump/TOSEC downloads into a separate networked bubblewrap worker with the game archive invisible, exact DNS/TLS host inputs, HTTPS allow-lists, staged rebuild, integrity checks and rollback;
+- target validation on Discworld Noir Disc 1 remained Redump `MATCH 1:1` before and after an official Redump update; the 2026-09-11 update rebuilt the catalog to 61118 games / 199470 ROM records;
+- protection scanning remained direct/raw and read-only with no mount or execution.
+
+### CDEmu / multidisc ownership hardening
+
+- added an inter-process CDEmu operation lock and private ownership journal under XDG state;
+- journal records boot/daemon identity, owner PID/start time, base device count, exact expected media/mappings and write-ahead removal state;
+- stale recovery removes only the exact owned contiguous appended suffix after revalidating mapping, rdev, media and RO mount evidence; ambiguity or external activity fails closed;
+- normal 3-disc cache/swap/cleanup and SIGKILL recovery were physically validated;
+- consolidated the non-live launch lock fix into the hardening wrapper, removing the temporary runtime-audit shim.
+
+### Runtime surface / D-Bus hardening
+
+- added read-only runtime auditing for session/system D-Bus names, UNIX sockets, runtime paths, device nodes and effective xdg-dbus-proxy policy;
+- verified Bubblejail 0.10.4 uses `[gnome_toolkit] dconf_dbus`; the validated profile now requires it disabled;
+- Bottles settings persist through `GSETTINGS_BACKEND=keyfile`, so host `ca.desrt.dconf` access was removed without losing preferences;
+- effective session/system buses expose only `org.freedesktop.DBus` in the validated baseline, while the proxy remains filtered with no dconf talk/call grants;
+- runtime proxy checks fail closed if dconf grants, ambiguous proxy state or missing filtering reappear;
+- process/FD and environment-name scans found no sensitive inherited descriptors or known secret variables.
+
+### Gamepad hotplug
+
+- retained exact-node `jsX` + matching `eventX` isolation, minimal sysfs recreation, hidden hidraw and libudev notifications for physical disconnect/reconnect;
+- fixed a real unplug/replug race where sysfs could briefly reference an `eventX` node already removed from `/dev/input`;
+- the namespace helper remains fail-closed on changed/missing device identity; only those exact transient topology errors are retried by the monitor on the next poll;
+- target validation passed initial Xbox One S exposure, physical disconnect to an empty exact surface and reconnect with `sysfs=exact`, `udev=notified` and `hidraw=hidden`, with no intermediate false failure after the fix.
+
+### Validation
+
+- consolidated Bubblejail self-test: `PASS=17 FAIL=0 WARN=0`, including dconf blocked as the expected secure state;
+- Discworld Noir non-live path: dedicated RX 9070 XT, XWayland, network OFF, raw `/dev/srX` OFF, `/dev/sgX` hidden and `/mnt/cdemu=RO`, with GPU and Retro Optical pre/post proofs PASS;
+- live multidisc 3/3 kept exactly one active `/dev/sr0`, hid cached drives and `/dev/sgX`, preserved the same runtime D-Bus/socket surface across Disc 1 → Disc 2 and cleaned CDEmu cache automatically;
+- verifier sandbox, pre-update verify+scanner, official Redump update and post-update verify+scanner all PASS on the target machine;
+- CI remains green through the hardening consolidation and gamepad race fix; final Arch/CachyOS package acceptance remains the last release gate.
+
 ## 0.4.0
 
 First stable Bottles RetroCD release, published on 2026-09-10.
