@@ -28,8 +28,8 @@ replaces=('bottles-retro-cd-gui')
 makedepends=('git')
 install='bottles-retrocd.install'
 
-# Exact 0.4.1 release-candidate source after the complete target regression.
-_commit='ca3a6aeb22bad6d932121a24e17927fc11bf9eaf'
+# Exact 0.4.1 payload source: final runtime guard plus aligned installed docs.
+_commit='3c842c0c5f740a041c4f2de4edcdb899691ccbd2'
 
 source=(
   "$pkgname::git+$url.git#commit=$_commit"
