@@ -15,13 +15,31 @@ _DCONF_LABEL = "dconf D-Bus"
 _VALID_STATES = frozenset({"PASS", "FAIL", "WARN"})
 
 
+def _blocked_dconf_rc(detail: str) -> bool:
+    """Return True only for explicit non-zero dconf probe evidence.
+
+    The legacy self-test records a completed probe as ``rc=<integer>``. Missing
+    output (for example ``risultato assente``), malformed evidence and rc=127
+    must never be promoted to PASS merely because the legacy layer labelled the
+    result FAIL. rc=127 is reserved for missing probe tooling and is therefore
+    not positive evidence that the proxy blocked host dconf.
+    """
+    if not detail.startswith("rc="):
+        return False
+    try:
+        rc = int(detail[3:], 10)
+    except ValueError:
+        return False
+    return rc not in (0, 127)
+
+
 def normalize_sandbox_test_results(results: Iterable[TestResult]) -> list[TestResult]:
     """Return sandbox-test results with the dconf expectation inverted.
 
     A legacy PASS means dconf was reachable and is therefore a 0.4.1 failure.
-    A legacy FAIL means the dconf call was blocked/unavailable and is the
-    desired result. WARN (for example missing gdbus) remains WARN so missing
-    evidence is never promoted to PASS.
+    A legacy FAIL is promoted to PASS only when it carries explicit non-zero
+    return-code evidence from the dconf probe. Missing/malformed evidence stays
+    FAIL, while WARN (for example missing gdbus) remains WARN.
     """
     normalized: list[TestResult] = []
     dconf_seen = False
@@ -47,13 +65,16 @@ def normalize_sandbox_test_results(results: Iterable[TestResult]) -> list[TestRe
                 name,
                 "host dconf raggiungibile; 0.4.1 richiede dconf bloccato con GSETTINGS_BACKEND=keyfile",
             ))
-        elif state == "FAIL":
+        elif state == "FAIL" and _blocked_dconf_rc(detail):
             normalized.append((
                 "PASS",
                 name,
                 "host dconf bloccato; preferenze Bottles persistono via GSETTINGS_BACKEND=keyfile",
             ))
         else:
+            # Missing/malformed evidence and WARN are deliberately preserved.
+            # Security evidence must never be synthesized from an ambiguous
+            # legacy failure state.
             normalized.append(raw)
 
     return normalized
