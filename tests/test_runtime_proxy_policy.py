@@ -60,6 +60,53 @@ class RuntimeProxyPolicyTests(unittest.TestCase):
             self.assertIn("--talk=ca.desrt.dconf", report.active_policy_args)
             self.assertEqual(report.dconf_policy_args, ("--talk=ca.desrt.dconf",))
 
+    def test_validate_accepts_exact_filtered_proxy_without_dconf(self):
+        report = rpp.ProxyPolicyReport(
+            gnome_dconf_dbus=False,
+            raw_session_args=(),
+            proxy_pids=(55,),
+            active_policy_args=("--filter",),
+            dconf_policy_args=(),
+            warnings=(),
+        )
+        self.assertIs(rpp.validate_proxy_policy(report), report)
+
+    def test_validate_rejects_profile_dconf(self):
+        report = rpp.ProxyPolicyReport(
+            gnome_dconf_dbus=True,
+            raw_session_args=(),
+            proxy_pids=(55,),
+            active_policy_args=("--filter", "--talk=ca.desrt.dconf"),
+            dconf_policy_args=("--talk=ca.desrt.dconf",),
+            warnings=(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "dconf_dbus=true"):
+            rpp.validate_proxy_policy(report)
+
+    def test_validate_rejects_effective_dconf_grant_even_when_profile_is_off(self):
+        report = rpp.ProxyPolicyReport(
+            gnome_dconf_dbus=False,
+            raw_session_args=(),
+            proxy_pids=(55,),
+            active_policy_args=("--filter", "--call=ca.desrt.dconf=org.example.Read@/x"),
+            dconf_policy_args=("--call=ca.desrt.dconf=org.example.Read@/x",),
+            warnings=(),
+        )
+        with self.assertRaisesRegex(RuntimeError, "grant dconf effettivo"):
+            rpp.validate_proxy_policy(report)
+
+    def test_validate_rejects_missing_filter_or_ambiguous_proxy(self):
+        report = rpp.ProxyPolicyReport(
+            gnome_dconf_dbus=False,
+            raw_session_args=(),
+            proxy_pids=(55, 56),
+            active_policy_args=(),
+            dconf_policy_args=(),
+            warnings=("proxy sessione Bubblejail ambiguo: 2 processi",),
+        )
+        with self.assertRaisesRegex(RuntimeError, "attesi=1"):
+            rpp.validate_proxy_policy(report)
+
     def test_formatter_keeps_profile_and_effective_policy_separate(self):
         report = rpp.ProxyPolicyReport(
             gnome_dconf_dbus=False,
