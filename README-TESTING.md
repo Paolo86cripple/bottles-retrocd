@@ -1,6 +1,6 @@
-# Testing Bottles RetroCD 0.4.0
+# Testing Bottles RetroCD 0.4.1
 
-This tree is the pre-packaging 0.4.0 candidate. Running it locally does not install files under `/usr`. User-facing terminal examples use fish syntax.
+This tree is the 0.4.1 compatibility-preserving hardening line. Running it locally does not install files under `/usr`. User-facing terminal examples use fish syntax.
 
 Start with:
 
@@ -17,112 +17,181 @@ env PYTHONWARNINGS='error::ResourceWarning' python -m unittest discover -s tests
 bash -n run-local.sh
 ```
 
-Current expected count: **151 tests PASS**.
+The exact test count may grow during focused hardening; the gate is that the complete suite passes with `ResourceWarning` promoted to an error. CI also compiles every application module, validates shell/Arch packaging syntax, release identity/package metadata and rejects unsafe dynamic-execution patterns.
 
-CI also compiles every application module including the final display/gamepad wrapper and namespace helpers, promotes `ResourceWarning` to an error, checks `run-local.sh`, and rejects `os.system`, `shell=True`, `eval` and dynamic `exec` in Python application paths.
+## 1. Bubblejail base sandbox
 
-## Final pre-packaging target-machine gate — PASS
+With Bottles fully closed, **Test Bubblejail** must prove:
 
-The complete 0.4.0 real-machine gate passed on 2026-09-10:
+- persistent `[network]` absent;
+- private HOME writable while the real host HOME remains hidden;
+- host `.ssh` hidden;
+- configured RW paths writable and configured RO paths non-writable;
+- a real non-whitelist host sentinel hidden;
+- loopback-only base networking;
+- Wayland/XWayland, audio, selected GPU and Vulkan surfaces available as configured;
+- host dconf blocked.
 
-1. schema-2 archive root and private config permissions — PASS;
-2. GUI archive re-selection and restart persistence — PASS;
-3. archive metadata signature before/after selection identical — PASS;
-4. resize + vertical scrolling across all notebook pages — PASS;
-5. Test Bubblejail with a real temporary non-whitelist sentinel — **PASS=17 FAIL=0 WARN=0**;
-6. Test CD → Bubblejail with real temporary sentinels and verified RO optical mount — PASS;
-7. final secured Bottles launch with GPU pre/post + Retro Optical pre/post proof — PASS;
-8. final Discworld Noir XWayland regression — PASS; game starts correctly with the previously validated fullscreen/audio behavior;
-9. standard Xbox One S initial exact-node proof during the final launch — PASS (`event9 + js0`, `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`).
+For 0.4.1, dconf is secure only when all of the following agree:
 
-## Gamepad / hotplug behavior
+- `[gnome_toolkit] dconf_dbus=false` in the Bubblejail profile;
+- Bottles preferences persist via `GSETTINGS_BACKEND=keyfile`;
+- host `ca.desrt.dconf` is not reachable;
+- effective `xdg-dbus-proxy` policy contains `--filter` and no dconf talk/call/own grant.
 
-Gamepad support is managed through Bubblejail's existing `[joystick]` service. RetroCD does **not** bind all of `/dev/input` and 0.4.0 does not expose `/dev/hidraw*` for the standard-controller path.
+Validated target baseline: **PASS=17 FAIL=0 WARN=0**.
 
-The pre-launch **Test gamepad** is fail-closed: the jail must show exactly the host-detected joystick node plus its matching evdev node(s). Node numbers are not contractual and may change after disconnect/reconnect.
+## 2. Pre-launch D-Bus profile guard
 
-Initial monitor activation uses the already-present static joystick surface and reports:
+The 0.4.1 entrypoint must refuse launch before Bubblejail starts if the static profile can expose host dconf.
+
+The guard rejects:
+
+- `gnome_toolkit.dconf_dbus=true`;
+- raw session D-Bus `--talk`, `--own` or `--call` grants whose exact or `.*` name policy includes `ca.desrt.dconf`.
+
+Unrelated raw D-Bus grants are not automatically rejected by this specific dconf guard. The already-running proxy remains subject to the independent effective-policy audit.
+
+## 3. GPU fail-closed launch
+
+For an acceptance launch:
+
+1. select the intended GPU;
+2. run **Test Vulkan** and require PASS;
+3. launch Bottles;
+4. require both `GPU pre-avvio` and `GPU post-avvio` PASS;
+5. confirm only the selected DRM card/render nodes are visible;
+6. confirm exactly one Vulkan GPU with matching vendor/device identity.
+
+Any missing/contradictory proof must fail closed. A post-launch proof failure must terminate the exact captured launch process group.
+
+## 4. Display / preferences
+
+Expected:
+
+- Auto does not force a Wine display backend;
+- native Wayland works when selected;
+- XWayland keeps the Bottles GTK UI usable while Wine/Proton takes the X11/XWayland path;
+- forcing XWayland does not add filesystem/network/GPU/optical permissions;
+- Bottles preferences persist through the isolated keyfile backend after full close/reopen.
+
+Discworld Noir has passed the 0.4.1 consolidated XWayland path with the dedicated RX 9070 XT and network OFF.
+
+## 5. Retro Optical / non-live game path
+
+With raw `/dev/srX` OFF and `/dev/sgX` OFF unless the test explicitly requires them:
+
+- CDEmu/vhba control surfaces remain hidden from the jail;
+- `/mnt/cdemu` is RO when a disc is mounted;
+- raw sr remains hidden by default;
+- GPU and Retro Optical pre/post proofs PASS;
+- the game launches normally.
+
+Validated Discworld Noir non-live baseline: dedicated RX 9070 XT, XWayland, network OFF, gamepad OFF, raw sr OFF, sg hidden, `/mnt/cdemu=RO`.
+
+## 6. CDEmu ownership / live multidisc
+
+Use an explicit saved multidisc set. 0.4.1 adds an inter-process operation lock and private ownership journal.
+
+Required invariants:
+
+- cache creation records exact base count, mapping, rdev, media and RO mount evidence;
+- cached drives stay host-side;
+- the jail sees only the exact active optical device when raw exposure is required;
+- swap keeps the validated active mapping stable;
+- cleanup is LIFO over the exact owned suffix;
+- count/mapping/media/daemon ambiguity fails closed;
+- a stale journal is recovered only after Bottles is no longer running;
+- SIGKILL recovery never guesses ownership.
+
+Discworld Noir three-disc cache/swap/cleanup and abnormal-termination recovery have passed the target gate.
+
+## 7. Runtime-surface audit
+
+With Bottles already running, **Analizza runtime sandbox** is read-only and must not modify policy.
+
+For the network-OFF/gamepad-OFF baseline, expected evidence is:
+
+- session D-Bus: only `org.freedesktop.DBus`;
+- system D-Bus: only `org.freedesktop.DBus`;
+- expected PulseAudio/Wayland/X11 sockets only;
+- loopback interface and no routes;
+- selected DRM nodes only;
+- one exact filtered `xdg-dbus-proxy` process;
+- zero dconf grants.
+
+Live multidisc may add only the exact active `/dev/srX`; cached optical devices and `/dev/sgX` must remain hidden.
+
+Real process-hygiene evidence recorded for 0.4.1: `FD_SOSPETTI=0` and `VAR_SENSIBILI=0` for the reviewed path/name classes.
+
+## 8. Gamepad exact-node / hotplug
+
+Standard gamepad support is through Bubblejail `[joystick]`; there is no broad `/dev/input` share and `/dev/hidraw*` remains hidden.
+
+Required sequence:
+
+1. static test exposes only current `jsX` + matching `eventX` nodes;
+2. launch Bottles with gamepad ON;
+3. initial monitor state reports exact nodes, `sysfs=exact`, `udev=initial-static`, `hidraw=hidden`;
+4. physically disconnect: surface becomes empty and reports `udev=notified`;
+5. reconnect: only the newly detected exact nodes return with `sysfs=exact`, `udev=notified`, `hidraw=hidden`.
+
+0.4.1 contains a narrow retry for the real unplug/replug race where sysfs and `/dev/input` can be briefly out of phase. Only exact disappearing/changed-source topology errors are retryable; unrelated helper failures remain hard failures.
+
+Xbox One S initial/disconnect/reconnect has passed this gate on the target machine.
+
+## 9. Verifier/scanner sandbox
+
+Run **Test verifica sandbox** before release acceptance. Expected attestation:
 
 ```text
-sysfs=exact · udev=initial-static · hidraw=hidden
+archive=RO · app=RO · catalog=RO · cache=RW · host-home-sentinel=hidden · net=lo · proc=hidden · sys=hidden · run-host=hidden
 ```
 
-A real add/remove/reconnect rebuilds only the exact gamepad nodes and matching minimal sysfs subtree, emits matching libudev notifications for Wine/winebus, and reports:
+Then verify/scan a known archive image. Required invariants:
 
-```text
-sysfs=exact · udev=notified · hidraw=hidden
-```
+- verifier/scanner executes in the dedicated bubblewrap worker;
+- input remains under the authorized archive root;
+- verification does not mount/execute/rename/rewrite dump files;
+- exact known data reports `MATCH 1:1`;
+- scanner evidence stays separate from DAT matching;
+- only the hash cache is writable.
 
-The namespace entry path discovers the user namespace that owns Bubblejail's mount namespace with Linux `NS_GET_USERNS`, prepares detached exact-node mounts in a private staging mount namespace, revalidates pinned device/sysfs identity, then enters the active Bubblejail mount/network namespaces. No privilege elevation or broad input fallback is used.
+Discworld Noir Disc 1 has passed this path against Redump before and after an official DAT update.
 
-Physical Xbox One S validation passed for initial activation, disconnect to an empty exact surface, and reconnect without restarting Bottles.
+## 10. Official DAT updater sandbox
 
-Switch/gyro controllers that require hidraw are out of scope for 0.4.0.
+The official updater must run in its own networked bubblewrap worker:
 
-## Archive root behavior
+- game archive invisible;
+- application code RO;
+- verifier data/catalog and cache only RW;
+- private HOME/tmp;
+- no host proc/sys/runtime state;
+- exact trusted DNS/TLS host inputs;
+- HTTPS official-host allow-list with redirect revalidation;
+- staged catalog rebuild, integrity check and rollback.
 
-Configuration schema 2 persists `gpu_pci`, `display_backend` and `archive_root`.
+After an update, immediately re-run the known-disc verify/scan regression.
 
-On an existing target installation, the historical `/run/media/<user>/Data/Downloads/retropc` directory is migrated only when it exists. Migration stores the path; it does not move data. New installations must select an archive explicitly.
+## 11. Package artifact gate
 
-Explicit RO sharing of the configured archive root and its subdirectories is allowed. RW access to any part of the archive is forbidden, and ancestors remain forbidden in both modes. Selecting an archive does not automatically share it.
+The merge/release artifact must be built from the exact commit pinned by `packaging/arch/PKGBUILD` and `.SRCINFO`.
 
-Final target validation confirmed `0700` on the config directory, `0600` on `config.toml`, persistence after restart and identical pre/post archive metadata signatures.
+Required target sequence:
 
-## CDEmu + UDisks2
+- clean `makepkg --cleanbuild --syncdeps`;
+- inspect package metadata/file list;
+- install/reinstall the exact artifact;
+- `pacman -Qkk bottles-retrocd` reports zero altered files;
+- package-owned `/usr` payload disappears on removal;
+- RetroCD config, Bubblejail `Bottles` instance/profile and verifier state remain byte-for-byte unchanged across uninstall/reinstall;
+- one installed-package normal Bottles launch still passes the static dconf guard, GPU and Retro Optical proofs.
 
-From the **Test** tab, **Test CDEmu + UDisks2** should prove temporary drive creation/mapping, D-Bus load/unload, exact SCSI optical identity, advanced-option get/set/get, verified UDisks2 RO mount, denied write and safe cleanup.
-
-`cdemu-client` is optional. RetroCD controls CDEmu through D-Bus. `udisksctl` is required for UDisks2 RO mounts and live multidisc behavior.
-
-The CDEmu/VHBA block-layer `ro` flag may report RW and is diagnostic only. The independently verified UDisks2 filesystem mount is authoritative for the RO policy.
-
-## Bubblejail
-
-**Test Bubblejail** proves whitelist audit, no persistent `[network]`, private HOME, hidden real HOME/`.ssh`, configured RW/RO semantics, a real hidden non-whitelist sentinel, loopback-only base networking, and the intended Wayland/X11/audio/GPU/Vulkan surfaces.
-
-Final target result: **17 PASS, 0 FAIL, 0 WARN**.
-
-## GPU fail-closed launch
-
-The automatic launch guard has passed target-machine tests on both AMD GPU paths. Any final acceptance launch must prove stable PCI identity, live selected DRM nodes, known non-selected DRM nodes absent, exactly one Vulkan GPU with matching vendor/device IDs, pre-launch `DRI_PRIME`, and post-launch effective isolation inside the already-running Bubblejail instance.
-
-Missing proof is failure and must terminate/refuse the launch rather than silently continue.
-
-## Display and Bottles preferences
-
-Persistent choices are **Auto**, **Wayland nativo** and **XWayland**. XWayland is a compatibility fallback and does not add filesystem, network, GPU or optical permissions.
-
-Bottles global preferences use `GSETTINGS_BACKEND=keyfile` inside the private Bubblejail HOME. Preference persistence has already passed target testing.
-
-Discworld Noir with `proton-cachyos-native` + D7VK passed the final XWayland regression on 2026-09-10.
-
-## CD → Bubblejail
-
-The integrated test creates a temporary CDEmu drive and real temporary host sentinel directories, then proves the exact optical device policy, `/mnt/cdemu` RO and sentinel invisibility, followed by cleanup.
-
-Final target result: `/dev/sr1` validated as SCSI optical type 5, host mount verified RO, both real sentinels hidden, `/mnt/cdemu` visible/non-writable and temporary-drive cleanup PASS.
-
-## Multidisc
-
-A saved explicit set is required for live multidisc. Autodetection is advisory only and never persisted as policy. Discworld Noir three-disc 1→2→3→2 live swapping and automatic cleanup have already passed target validation.
-
-## Verifier
-
-The **Verifica** tab provides official Redump PC/TOSEC updates, local DAT import, single/set verification, protection scan and DAT↔scanner comparison.
-
-Required invariants remain: unique exact data reports `MATCH 1:1`, equivalent duplicate complete records remain `AMBIGUOUS`, incorrect/partial data remains `MISMATCH`, verification never mounts/executes the dump, source content/mtime remain unchanged, and scanner evidence never overrides cryptographic DAT matching.
-
-The updater remains HTTPS-only to approved official hosts, bounded, staged and rollback-safe.
-
-## Operational runner test
-
-Runner persistence has already passed on the target system. If repeated, enable network for one launch, install/download the runner, close Bottles fully, reopen with network OFF, and confirm the runner remains usable from Bubblejail's private HOME.
+A previous 0.4.1-1 candidate already passed removal/reinstall preservation with 65 package files and 0 altered files, but any later source-pin change requires the final artifact to be rebuilt and rechecked before merge.
 
 ## Security boundary
 
-Bubblejail protects Bottles/Wine. The GTK controller, gamepad hotplug helpers, verifier, CDEmu daemon and libMirage are host-side and run with the logged-in user's permissions, so host-side archive/DAT parsing treats inputs as untrusted data. The hotplug helpers are limited to the active `Bottles` instance and validated gamepad device/sysfs references; they do not add a persistent broad device share or require privilege elevation.
+Bubblejail protects Bottles/Wine. The GTK controller, CDEmu/libMirage control and gamepad hotplug helpers are host-side user processes. 0.4.1 moves archive verification/scanning into a dedicated non-networked bubblewrap worker and official DAT updates into a separate networked worker with the archive invisible.
 
-## Merge status
-
-The technical pre-packaging gate is complete. PR #3 may be merged after the final documentation-only CI remains green and the repository owner explicitly chooses to merge. Packaging then starts from merged `main`.
+No release gate may be bypassed by widening filesystem, D-Bus, input, GPU or optical permissions merely for convenience.
