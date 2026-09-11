@@ -24,9 +24,23 @@ class RuntimeSandboxTestPolicyTests(unittest.TestCase):
 
     def test_missing_probe_warning_is_not_promoted(self):
         result = normalize_sandbox_test_results([
-            ("WARN", "dconf D-Bus", "comando non disponibile"),
+            ("WARN", "dconf D-Bus", "strumento di test non disponibile"),
         ])
-        self.assertEqual(result, [("WARN", "dconf D-Bus", "comando non disponibile")])
+        self.assertEqual(result, [("WARN", "dconf D-Bus", "strumento di test non disponibile")])
+
+    def test_missing_result_failure_is_not_promoted(self):
+        result = normalize_sandbox_test_results([
+            ("FAIL", "dconf D-Bus", "risultato assente"),
+        ])
+        self.assertEqual(result, [("FAIL", "dconf D-Bus", "risultato assente")])
+
+    def test_malformed_or_missing_tool_rc_is_not_promoted(self):
+        for detail in ("rc=not-an-int", "rc=127", "rc=0"):
+            with self.subTest(detail=detail):
+                result = normalize_sandbox_test_results([
+                    ("FAIL", "dconf D-Bus", detail),
+                ])
+                self.assertEqual(result, [("FAIL", "dconf D-Bus", detail)])
 
     def test_unrelated_results_are_unchanged(self):
         original = [
