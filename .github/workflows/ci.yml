@@ -124,7 +124,7 @@ jobs:
               '\tpkgrel = 1',
               '\tconflicts = bottles-retro-cd-gui',
               '\treplaces = bottles-retro-cd-gui',
-              '\tsource = bottles-retrocd::git+https://github.com/Paolo86cripple/bottles-retrocd.git#commit=26a0f3ed2bca4376501f226cf8ea47128fecedd6',
+              '\tsource = bottles-retrocd::git+https://github.com/Paolo86cripple/bottles-retrocd.git#commit=ca3a6aeb22bad6d932121a24e17927fc11bf9eaf',
           ):
               if required not in srcinfo:
                   raise SystemExit(f'missing .SRCINFO metadata: {required}')
