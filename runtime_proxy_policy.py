@@ -155,6 +155,24 @@ def inspect_proxy_policy(instance: str, config: dict, *, proc_root: Path = Path(
     )
 
 
+def validate_proxy_policy(report: ProxyPolicyReport) -> ProxyPolicyReport:
+    """Fail closed unless the active session proxy proves the hardened dconf boundary."""
+    errors: list[str] = []
+    if report.gnome_dconf_dbus:
+        errors.append("gnome_toolkit.dconf_dbus=true")
+    if report.dconf_policy_args:
+        errors.append("grant dconf effettivo: " + ", ".join(report.dconf_policy_args))
+    if len(report.proxy_pids) != 1:
+        errors.append(f"proxy sessione attesi=1 ottenuti={len(report.proxy_pids)}")
+    if "--filter" not in report.active_policy_args:
+        errors.append("xdg-dbus-proxy senza --filter")
+    if report.warnings:
+        errors.extend(report.warnings)
+    if errors:
+        raise RuntimeError("Policy D-Bus host non sicura: " + " · ".join(errors))
+    return report
+
+
 def format_proxy_policy(report: ProxyPolicyReport) -> str:
     lines = [
         "[HOST-PROFILE] gnome_toolkit.dconf_dbus="
@@ -185,4 +203,5 @@ __all__ = [
     "format_proxy_policy",
     "inspect_proxy_policy",
     "profile_dbus_policy",
+    "validate_proxy_policy",
 ]
