@@ -244,11 +244,12 @@ Completed gates:
 - detailed Phase D evidence is recorded in `docs/0.4.1-PHASE-D-RUNTIME-AUDIT.md`;
 - CI #466 on consolidated HEAD `af8b6b9efe06ba652644132c97051bffdea24ff9`: SUCCESS for Python syntax, unit tests, shell syntax, Arch packaging syntax, release identity/metadata and unsafe dynamic-execution scan;
 - **Phase E E1 — consolidated sandbox self-test:** target PASS on 2026-09-11 with `PASS=17 FAIL=0 WARN=0`; dconf is counted PASS only because host dconf is blocked while Bottles preferences persist via `GSETTINGS_BACKEND=keyfile`;
-- **Phase E E2 — consolidated non-live game path:** Discworld Noir target PASS with RX 9070 XT, XWayland, network OFF, gamepad OFF, raw `/dev/srX` OFF, `/dev/sgX` hidden and `/mnt/cdemu=RO`; GPU and Retro Optical pre/post proofs PASS, no CDEmu lock self-contention, runtime session/system buses expose only `org.freedesktop.DBus`, and effective proxy policy is only `--filter` with zero dconf grants.
+- **Phase E E2 — consolidated non-live game path:** Discworld Noir target PASS with RX 9070 XT, XWayland, network OFF, gamepad OFF, raw `/dev/srX` OFF, `/dev/sgX` hidden and `/mnt/cdemu=RO`; GPU and Retro Optical pre/post proofs PASS, no CDEmu lock self-contention, runtime session/system buses expose only `org.freedesktop.DBus`, and effective proxy policy is only `--filter` with zero dconf grants;
+- **Phase E E3 — gamepad exact-node/hotplug:** Xbox One S static test PASS with only `js0`/matching evdev visible and no hidraw; first disconnect/reconnect exposed a transient sysfs↔`/dev/input` race, fixed without relaxing identity checks by retrying only exact disappearing/changed-source races; CI #476 on `787122f083c7b0643c8f36e91390536ce0dc28ee` PASS; target retest PASS with initial `udev=initial-static`, disconnect to empty exact surface, reconnect to exact `js0`/`event9`, both `udev=notified`, `sysfs=exact`, `hidraw=hidden`, and no intervening FAIL.
 
 Still required before merge/release consideration:
 
-- continue the complete 0.4.1 real-machine regression on the consolidated branch, including gamepad/hotplug and verifier/updater revalidation plus any remaining release-critical paths not already covered above;
+- revalidate verifier/updater on the consolidated branch and cover any remaining release-critical paths not already proven above;
 - build the Arch/CachyOS package and run clean install/upgrade/package-integrity/uninstall-preservation gates;
 - compare final branch against `main`, complete release documentation/version/package metadata for the chosen 0.4.1 artifact, and obtain explicit owner approval before merge/release;
 - no automatic merge; owner approval remains required.
