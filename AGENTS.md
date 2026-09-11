@@ -115,6 +115,8 @@ Security regressions are release blockers.
 - XWayland is a compatibility fallback and must not broaden filesystem/network/GPU/optical access.
 - Forced XWayland requires existing Bubblejail `x11` + `wayland`; fail closed rather than adding permissions silently.
 - Bottles global settings use `GSETTINGS_BACKEND=keyfile` inside private HOME, not host dconf.
+- Bubblejail `[gnome_toolkit] dconf_dbus` must be false for the validated `Bottles` profile; the effective session proxy must remain filtered with no `--talk`/`--call` grant to `ca.desrt.dconf`.
+- A successful dconf reachability probe is a security failure in 0.4.1. A blocked probe is PASS only when the keyfile backend/persistence and effective proxy policy have been positively validated; missing probe tooling remains WARN rather than PASS.
 
 ### GPU
 
@@ -137,6 +139,8 @@ Security regressions are release blockers.
 - No broad storage-tree exposure for optical compatibility.
 - Lifecycle detects the effective VHBA provider, including CachyOS kernel-provided VHBA, and must not duplicate privileged/kernel infrastructure.
 - During a live Bottles session, broad “eject all” operations are intentionally refused; use the validated active-device eject path.
+- Mutating CDEmu operations are serialized with an inter-process flock. Live multidisc ownership is journaled under private XDG state with exact boot/daemon/PID/device/mapping/media/mount evidence and write-ahead cleanup state.
+- Stale live-cache recovery may remove only the exact owned contiguous appended suffix after revalidating boot, daemon identity, counts, mapping/rdev, media and RO mount state. Ambiguity or external CDEmu activity is fail-closed.
 
 ### Standard gamepad / input
 
@@ -163,7 +167,7 @@ Security regressions are release blockers.
 - During swap neutralize `/mnt/cdemu` to a real empty private directory, keep the same validated active `/dev/srX`, fail closed/rollback on mapping change.
 - Revalidate cache device count/order/mapping before cleanup; refuse ambiguous removal during external CDEmu activity.
 - Lock active drive/freeze set editing during live multidisc; poll Bottles exit and clean caches automatically; refuse normal GUI close while live Bottles depends on cache.
-- Known residual: abnormal GUI/process kill may leave temporary cache drives; safe recovery is post-release work and must not weaken ownership validation.
+- Abnormal GUI/process termination is covered by the 0.4.1 ownership journal/operation lock recovery path; recovery is LIFO over the exact owned suffix and never guesses ownership.
 
 ## Redump / TOSEC verifier rules
 
@@ -223,25 +227,28 @@ Target validation included:
 
 ## 0.4.1 hardening validation in progress
 
-Focused branch: `hardening/0.4.1-verifier-sandbox`.
+Focused branch: `hardening/0.4.1-runtime-audit`.
 
 Completed gates:
 
-- dedicated verifier/scanner bubblewrap boundary implemented without changing the released Bottles/Wine Bubblejail runtime policy;
-- target attestation PASS on CachyOS: archive=RO, app=RO, catalog=RO, cache=RW, host HOME sentinel hidden, network=loopback only, `/proc` hidden, `/sys` hidden, host `/run` runtime state hidden;
-- real Discworld Noir Disc 1 CUE/BIN verification through the worker PASS with Redump `MATCH 1:1` and protection scanner completing direct raw/ISO reads without mount/execution;
-- GUI `Test verifica sandbox` PASS and GUI `Verifica + confronta scanner` PASS on the same image;
-- official Redump updater moved to a separate networked bubblewrap worker; successful target update rebuilt the live catalog to 1 catalog / 61096 games / 199394 ROM records;
-- CLI post-update Discworld Noir verification remained `MATCH 1:1`, proving download → staged catalog rebuild → atomic install → isolated verifier read path without archive regression;
-- GUI `Aggiorna Redump PC` PASS on the target system, followed immediately by GUI `Verifica + confronta scanner` PASS and Redump `MATCH 1:1` on Discworld Noir Disc 1;
-- CI at updater-boundary HEAD: 180/180 unit tests PASS plus Python syntax, shell syntax, Arch packaging syntax, release identity/metadata and unsafe dynamic-execution scan PASS.
+- **Phase A — verifier/scanner isolation:** dedicated verifier/scanner bubblewrap boundary implemented; target attestation PASS with archive/app/catalog RO, only verifier cache RW, private HOME/tmp, loopback-only networking, `/proc` hidden, `/sys` hidden and host runtime state hidden; real Discworld Noir Disc 1 CUE/BIN verification remained Redump `MATCH 1:1` and scanner completed direct raw/ISO reads without mount/execution;
+- **Phase B — official DAT updater isolation:** Redump/TOSEC updates moved to a separate networked bubblewrap worker with archive invisible, staged rebuild/rollback and exact DNS/TLS host inputs; successful target Redump update rebuilt 1 catalog / 61096 games / 199394 ROM records and immediate CLI/GUI Discworld verification remained `MATCH 1:1`;
+- **Phase C — CDEmu ownership/recovery:** inter-process lock, private ownership journal, exact appended-suffix model and write-ahead removal state implemented and target-validated; normal 3-disc cache/swap/cleanup PASS; SIGKILL recovery deferred while Bottles was open then removed the exact owned suffix LIFO after close, with journal cleared; updater preflight refuses unresolved ownership;
+- non-live CDEmu launch self-contention fix is target-validated on Discworld Noir and retained without speculative refactor for the final regression;
+- **Phase D — runtime D-Bus/socket/process audit: PASS on 2026-09-11.** Bubblejail 0.10.4 AUR effective key is `[gnome_toolkit] dconf_dbus`; Bottles was positively observed with `GSETTINGS_BACKEND=keyfile`, settings file updates and persistence across full restart; after `dconf_dbus=false`, `ca.desrt.dconf` disappeared, introspection returned `ServiceUnknown`, effective xdg-dbus-proxy policy was only `--filter`, and Discworld/GPU/XWayland/audio/Retro Optical remained functional;
+- normal runtime snapshot with network OFF/gamepad OFF/raw sr OFF exposed only `org.freedesktop.DBus` on both buses, expected Pulse/Wayland/X11 sockets and selected DRM card/render nodes;
+- live multidisc 3/3 snapshot exposed only the exact active `/dev/sr0` in addition to selected DRM nodes; Disc 1 → Disc 2 kept the same `/dev/sr0`, cached drives and `/dev/sgX` remained hidden, D-Bus/socket/network surface stayed unchanged, and automatic CDEmu cache cleanup PASS;
+- process/FD hygiene real-machine scan: `FD_SOSPETTI=0`; environment-name scan: `VAR_SENSIBILI=0`; verifier/updater already use `--clearenv` + `close_fds=True`, gamepad/CDEmu sensitive FDs use CLOEXEC, so no compatibility-risk refactor is justified solely to restate safe defaults;
+- runtime proxy audit is fail-closed if dconf profile/grants reappear or proxy filtering is ambiguous/missing;
+- legacy Bubblejail self-test semantics are normalized in the 0.4.1 runtime layer so dconf reachable = FAIL, dconf blocked = PASS, and missing probe evidence remains WARN;
+- detailed Phase D evidence is recorded in `docs/0.4.1-PHASE-D-RUNTIME-AUDIT.md`.
 
 Still required before merge/release consideration:
 
-- implement and target-validate CDEmu operation locking, ownership journal and safe stale-resource recovery without weakening current mapping/ownership checks;
-- perform evidence-led D-Bus/UNIX-socket/runtime-host exposure audit and remove only demonstrably unnecessary surfaces;
-- review host-helper FD/environment inheritance and apply narrow hygiene fixes where safe;
-- run the complete 0.4.1 real-machine regression and packaging/install/uninstall-preservation gates;
+- run current branch CI after final consolidation and resolve any regression;
+- perform the complete 0.4.1 real-machine regression, including verifier/updater, CDEmu crash recovery, normal and live optical paths, GPU/display/audio, network baseline, gamepad, configuration persistence and runtime audits;
+- build the Arch/CachyOS package and run clean install/upgrade/package-integrity/uninstall-preservation gates;
+- compare final branch against `main`, complete release documentation/version/package metadata for the chosen 0.4.1 artifact, and obtain explicit owner approval before merge/release;
 - no automatic merge; owner approval remains required.
 
 ## Arch / CachyOS packaging contract
@@ -280,11 +287,10 @@ Packaging policy:
 
 ## Post-release roadmap, agreed order
 
-0. **0.4.1 compatibility-preserving hardening — ACTIVE.** Harden host-side verifier/scanner/updater and lifecycle ownership/recovery without tightening the already validated game runtime in ways that could reduce compatibility.
+0. **0.4.1 compatibility-preserving hardening — ACTIVE.** Complete final consolidation, full regression and packaging/release gates for the verifier/scanner/updater, CDEmu ownership/recovery and runtime-surface hardening already target-validated.
 1. **Native legacy optical DRM compatibility/emulation.** Investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP optical protections; reproduce original verification behavior via Wine/CDEmu/libMirage or compatible components; reuse license-compatible open source; No-CD/cracks are not the normal solution; keep optional/fail-closed without broader sandbox permissions.
 2. **Legacy DirectX compatibility layer/manager.** DxWrapper/dgVoodoo2-style DirectX 5–9 support, optional/OFF by default, after DRM work and before shaders.
 3. **libRashader + Slang shaders.** Optional/OFF by default per game/bottle after the compatibility foundation is stable.
-4. **Abnormal-termination recovery for live multidisc cache devices.** Recover safely without weakening device-ownership validation; this work is now being pulled into the active 0.4.1 hardening cycle together with explicit CDEmu ownership journaling/locking.
 
 Post-release maintenance backlog:
 
@@ -296,4 +302,4 @@ None of these may weaken the validated Bubblejail boundary or become mandatory w
 
 ## Documentation references
 
-Keep aligned: `README.md`, `README-TESTING.md`, `REVIEW.md`, `docs/SECURITY-REVIEW.md`, `docs/TESTING.md`, `docs/ROADMAP.md`, `CHANGELOG.md`, and `packaging/arch/README.md`.
+Keep aligned: `README.md`, `README-TESTING.md`, `REVIEW.md`, `docs/SECURITY-REVIEW.md`, `docs/TESTING.md`, `docs/ROADMAP.md`, `docs/0.4.1-PHASE-D-RUNTIME-AUDIT.md`, `CHANGELOG.md`, and `packaging/arch/README.md`.
