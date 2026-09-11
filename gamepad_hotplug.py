@@ -20,6 +20,17 @@ from sandbox_backend import INSTANCE, SandboxBackend, run_cmd
 NS_HELPER = Path(__file__).with_name("gamepad_ns_entry.py")
 
 
+class GamepadTopologyRace(RuntimeError):
+    """Host input topology changed while exact-node reconciliation was being prepared."""
+
+
+_TRANSIENT_TOPOLOGY_MARKERS = (
+    "Nodo gamepad host non disponibile:",
+    "Risorsa hotplug non più disponibile:",
+    "Risorsa host cambiata durante la riconciliazione hotplug:",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class HotplugResult:
     devices: tuple[GamepadDevice, ...]
@@ -48,6 +59,10 @@ def _node_sort_key(name: str) -> tuple[str, int]:
     prefix = name.rstrip("0123456789")
     suffix = name[len(prefix) :]
     return prefix, int(suffix) if suffix.isdecimal() else -1
+
+
+def _transient_topology_failure(output: str) -> bool:
+    return any(marker in output for marker in _TRANSIENT_TOPOLOGY_MARKERS)
 
 
 def device_node_map(devices: tuple[GamepadDevice, ...]) -> dict[str, str]:
@@ -193,6 +208,15 @@ def reconcile_gamepads(
         check=False,
     )
     if proc.returncode != 0:
+        if _transient_topology_failure(proc.stdout):
+            # The helper validates and pins every exact host object before it
+            # enters/mutates the Bubblejail mount namespace. If unplug/replug
+            # changes one of those objects during that preparation, nothing has
+            # been broadened or partially committed: keep the last known-good
+            # jail surface and let the monitor retry on the next poll.
+            raise GamepadTopologyRace(
+                "topologia input cambiata durante la preparazione exact-node"
+            )
         raise RuntimeError(
             f"Helper namespace gamepad fallito (rc={proc.returncode}).\n"
             + proc.stdout[-3000:]
@@ -262,6 +286,13 @@ class GamepadHotplugMonitor:
                     previous = host_fingerprint()
                     activated = True
                     first = False
+            except GamepadTopologyRace:
+                # Normal unplug/replug can briefly leave sysfs and /dev/input
+                # out of phase. The exact-node helper deliberately refuses that
+                # transient state before namespace mutation. Do not turn the
+                # refusal into a false user-visible failure and, crucially, do
+                # not advance `previous`: the next poll must retry reconciliation.
+                pass
             except Exception as exc:
                 self._report(f"[FAIL] Gamepad hotplug: {exc}", True)
                 # A failed initial capability probe leaves Bubblejail's known-good
