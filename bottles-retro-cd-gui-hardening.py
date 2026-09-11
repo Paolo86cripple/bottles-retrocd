@@ -320,10 +320,21 @@ class Window(_game.Window):
         return text
 
     def launch_bottles(self):
+        """Serialize launch ownership without non-live flock self-contention."""
         live_requested = bool(self.ui_get(self.live_multidisc_switch.get_active))
         if not live_requested:
-            with self._cdemu_operation():
+            if not self.cdemu_ownership.session_locked:
+                self._recover_stale_cdemu_state()
+            self.cdemu_ownership.acquire_session_lock(timeout=2.0)
+            try:
+                if self.cdemu_ownership.load() is not None:
+                    raise CDEmuOwnershipError(
+                        "Journal CDEmu non risolto prima dell'avvio non-live; operazione rifiutata."
+                    )
                 return super().launch_bottles()
+            finally:
+                self.cdemu_ownership.release_session_lock()
+
         self.cdemu_ownership.acquire_session_lock(timeout=2.0)
         try:
             if self.cdemu_ownership.load() is not None:
