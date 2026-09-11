@@ -24,6 +24,7 @@ from runtime_proxy_policy import (  # noqa: E402
     inspect_proxy_policy,
     validate_proxy_policy,
 )
+from runtime_sandbox_test_policy import normalize_sandbox_test_results  # noqa: E402
 from runtime_surface_audit import (  # noqa: E402
     bubblejail_runtime_audit_invocation,
     format_runtime_audit,
@@ -33,7 +34,7 @@ from sandbox_backend import INSTANCE, run_cmd  # noqa: E402
 
 
 class Window(_hard.Window):
-    """Add diagnostic runtime enumeration without changing the game policy."""
+    """Add validated runtime auditing without broadening the game policy."""
 
     def __init__(self, app):
         super().__init__(app)
@@ -83,6 +84,19 @@ class Window(_hard.Window):
             return super(_hard.Window, self).launch_bottles()
         finally:
             self.cdemu_ownership.release_session_lock()
+
+    def run_sandbox_test(self):
+        """Keep the legacy self-test but apply the validated 0.4.1 dconf policy."""
+        test_network = self.ui_get(self.test_network_check.get_active)
+        results = normalize_sandbox_test_results(self.sandbox.test())
+        if test_network:
+            results += self.sandbox.test_runtime_network()
+        lines = [f"[{state}] {name}: {detail}" for state, name, detail in results]
+        passed = sum(1 for state, _, _ in results if state == "PASS")
+        failed = sum(1 for state, _, _ in results if state == "FAIL")
+        warned = sum(1 for state, _, _ in results if state == "WARN")
+        lines.append(f"\nRisultato sandbox: PASS={passed} FAIL={failed} WARN={warned}")
+        return "\n".join(lines)
 
     def run_runtime_surface_audit(self) -> str:
         if not self.sandbox.running():
