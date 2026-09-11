@@ -19,7 +19,11 @@ from runtime_bus_audit import (  # noqa: E402
     format_runtime_bus_audit,
     parse_runtime_bus_audit_output,
 )
-from runtime_proxy_policy import format_proxy_policy, inspect_proxy_policy  # noqa: E402
+from runtime_proxy_policy import (  # noqa: E402
+    format_proxy_policy,
+    inspect_proxy_policy,
+    validate_proxy_policy,
+)
 from runtime_surface_audit import (  # noqa: E402
     bubblejail_runtime_audit_invocation,
     format_runtime_audit,
@@ -102,13 +106,16 @@ class Window(_hard.Window):
         # Host-side and read-only: inspect only the policy flags on the exact
         # xdg-dbus-proxy process serving this Bubblejail instance. This avoids
         # inferring broad permissions from one successful D-Bus method call.
-        proxy_report = inspect_proxy_policy(INSTANCE, self.sandbox.config())
+        proxy_report = validate_proxy_policy(
+            inspect_proxy_policy(INSTANCE, self.sandbox.config())
+        )
 
         return (
             format_runtime_audit(report)
             + "\n\n"
             + format_runtime_bus_audit(bus_report)
             + "\n\n"
+            + "[PASS] D-Bus host: proxy filtrato · dconf bloccato\n"
             + format_proxy_policy(proxy_report)
         )
 
