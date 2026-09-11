@@ -21,7 +21,7 @@ pkgbase = bottles-retrocd
 	optdepends = sudo: update CDEmu/libMirage components from the Componenti tab
 	conflicts = bottles-retro-cd-gui
 	replaces = bottles-retro-cd-gui
-	source = bottles-retrocd::git+https://github.com/Paolo86cripple/bottles-retrocd.git#commit=26a0f3ed2bca4376501f226cf8ea47128fecedd6
+	source = bottles-retrocd::git+https://github.com/Paolo86cripple/bottles-retrocd.git#commit=ca3a6aeb22bad6d932121a24e17927fc11bf9eaf
 	source = bottles-retrocd-launcher
 	source = io.github.Paolo86cripple.BottlesRetroCD.desktop
 	source = io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml
