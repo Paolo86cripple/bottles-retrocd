@@ -101,6 +101,24 @@ def _dconf_policy_args(args: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(matched)
 
 
+def validate_profile_policy(config: dict) -> None:
+    """Fail closed before launch if static profile settings can expose host dconf.
+
+    This is the pre-launch half of the 0.4.1 D-Bus invariant. The active
+    xdg-dbus-proxy is still inspected after launch because generated/effective
+    policy is the authoritative runtime proof.
+    """
+    gnome_dconf, raw = profile_dbus_policy(config)
+    errors: list[str] = []
+    if gnome_dconf:
+        errors.append("gnome_toolkit.dconf_dbus=true")
+    raw_dconf = _dconf_policy_args(raw)
+    if raw_dconf:
+        errors.append("raw D-Bus grant dconf: " + ", ".join(raw_dconf))
+    if errors:
+        raise RuntimeError("Profilo D-Bus Bubblejail non sicuro: " + " · ".join(errors))
+
+
 def inspect_proxy_policy(instance: str, config: dict, *, proc_root: Path = Path("/proc")) -> ProxyPolicyReport:
     if not instance or "/" in instance or "\x00" in instance:
         raise RuntimeError(f"Nome istanza Bubblejail non valido: {instance!r}")
@@ -203,5 +221,6 @@ __all__ = [
     "format_proxy_policy",
     "inspect_proxy_policy",
     "profile_dbus_policy",
+    "validate_profile_policy",
     "validate_proxy_policy",
 ]
