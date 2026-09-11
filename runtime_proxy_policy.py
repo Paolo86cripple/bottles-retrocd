@@ -21,7 +21,7 @@ _POLICY_PREFIXES = (
 
 @dataclass(frozen=True, slots=True)
 class ProxyPolicyReport:
-    portal_dconf_dbus: bool
+    gnome_dconf_dbus: bool
     raw_session_args: tuple[str, ...]
     proxy_pids: tuple[int, ...]
     active_policy_args: tuple[str, ...]
@@ -52,13 +52,16 @@ def _string_list(value: object, *, label: str) -> tuple[str, ...]:
 
 
 def profile_dbus_policy(config: dict) -> tuple[bool, tuple[str, ...]]:
-    portal = config.get("xdg_desktop_portal") or {}
+    # Bubblejail 0.10.4 defines dconf_dbus on [gnome_toolkit]. Reading it from
+    # another section would produce a false negative while the generated
+    # xdg-dbus-proxy policy can still contain --talk=ca.desrt.dconf.
+    gnome = config.get("gnome_toolkit") or {}
     debug = config.get("debug") or {}
-    if not isinstance(portal, dict) or not isinstance(debug, dict):
+    if not isinstance(gnome, dict) or not isinstance(debug, dict):
         raise RuntimeError("Profilo Bubblejail: sezione D-Bus non valida.")
-    dconf = portal.get("dconf_dbus", False)
+    dconf = gnome.get("dconf_dbus", False)
     if not isinstance(dconf, bool):
-        raise RuntimeError("Profilo Bubblejail: xdg_desktop_portal.dconf_dbus non booleano.")
+        raise RuntimeError("Profilo Bubblejail: gnome_toolkit.dconf_dbus non booleano.")
     raw = _string_list(debug.get("raw_dbus_session_args", []), label="debug.raw_dbus_session_args")
     return dconf, raw
 
@@ -101,7 +104,7 @@ def _dconf_policy_args(args: tuple[str, ...]) -> tuple[str, ...]:
 def inspect_proxy_policy(instance: str, config: dict, *, proc_root: Path = Path("/proc")) -> ProxyPolicyReport:
     if not instance or "/" in instance or "\x00" in instance:
         raise RuntimeError(f"Nome istanza Bubblejail non valido: {instance!r}")
-    portal_dconf, raw = profile_dbus_policy(config)
+    gnome_dconf, raw = profile_dbus_policy(config)
     uid = os.getuid()
     target_socket = f"/run/user/{uid}/bubblejail/{instance}/dbus_session_proxy"
     proxy_pids: list[int] = []
@@ -143,7 +146,7 @@ def inspect_proxy_policy(instance: str, config: dict, *, proc_root: Path = Path(
 
     active = tuple(policy)
     return ProxyPolicyReport(
-        portal_dconf_dbus=portal_dconf,
+        gnome_dconf_dbus=gnome_dconf,
         raw_session_args=raw,
         proxy_pids=tuple(sorted(proxy_pids)),
         active_policy_args=active,
@@ -154,8 +157,8 @@ def inspect_proxy_policy(instance: str, config: dict, *, proc_root: Path = Path(
 
 def format_proxy_policy(report: ProxyPolicyReport) -> str:
     lines = [
-        "[HOST-PROFILE] xdg_desktop_portal.dconf_dbus="
-        + ("true" if report.portal_dconf_dbus else "false"),
+        "[HOST-PROFILE] gnome_toolkit.dconf_dbus="
+        + ("true" if report.gnome_dconf_dbus else "false"),
         f"[HOST-PROFILE] debug.raw_dbus_session_args={len(report.raw_session_args)}",
     ]
     lines.extend(f"  {arg}" for arg in report.raw_session_args)
