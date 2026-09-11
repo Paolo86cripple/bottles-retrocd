@@ -39,6 +39,7 @@ jobs:
           retro_optical.py
           runtime_bus_audit.py
           runtime_proxy_policy.py
+          runtime_sandbox_test_policy.py
           runtime_surface_audit.py
           sandbox_backend.py
           settings_backend.py
