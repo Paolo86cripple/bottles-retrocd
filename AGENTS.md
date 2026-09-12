@@ -147,6 +147,11 @@ Security regressions are release blockers.
 - CDEmu mutations are serialized with the inter-process flock and private ownership journal.
 - Stale-cache recovery may remove only the exact owned contiguous appended suffix after strict revalidation; ambiguity/external activity is fail-closed.
 - Live multidisc must preserve the same validated active `/dev/srX`, expose only the active drive, keep cached drives/sg hidden and keep cache mounts read-only.
+- After the first working legacy-DRM path is validated, add **automatic Wine/Bottles optical-drive provisioning** as the immediate follow-up convenience feature: a newly created/first-seen RetroCD bottle must not require manual `winecfg`/Bottles drive setup before it can see the mounted disc.
+- The persistent DOS drive mapping should target the stable in-sandbox filesystem path `/mnt/cdemu`, not a host `/run/media/...` path or volatile `/dev/srX` number. Default to `D:` when free; never overwrite an existing user mapping, and choose/record another free letter if `D:` is already in use.
+- Mark the mapping explicitly as Wine drive type `cdrom` using the supported Wine/Bottles mechanism rather than relying only on autodetection.
+- Do not create a persistent `D::`/physical-device mapping by default. A `letter:: -> /dev/srX` mapping is allowed only when raw optical exposure is explicitly enabled for that launch and the exact active CDEmu `/dev/srX` has passed existing mapping/type proofs; stale physical mappings must be reconciled/removed on teardown or before the next launch.
+- Optical-drive provisioning must be idempotent, preserve unrelated `dosdevices` and bottle configuration, and fail closed on ambiguous prefix identity or conflicting user drive mappings.
 
 ### Standard gamepad / input
 
@@ -252,6 +257,15 @@ For Freelancer ITA, proceed diagnostically rather than jumping directly to a shi
 7. only then test a SafeDiscShim-style userspace compatibility path in an isolated feature branch, without changing host kernel drivers or relaxing Bubblejail;
 8. require the original mounted image/disc to remain necessary for success; a launch that succeeds with no media is evidence that the experiment crossed into a protection-removal path and is not acceptable as the default implementation.
 
+### Immediate follow-up after the first DRM success: automatic optical drive provisioning
+
+- Implement this immediately after the first SafeDisc/Freelancer compatibility path works, before broadening work to the next protection family.
+- Goal: after a bottle/prefix is created, Bottles/Wine should see the RetroCD optical drive automatically; the user should not have to open Bottles drive settings or `winecfg`, create a letter manually and point it at the mounted CD.
+- Reconcile the mapping at first sight/launch as well as creation time so existing prefixes can be upgraded idempotently and missed creation events are harmless.
+- Persistent filesystem-side mapping uses the stable in-jail `/mnt/cdemu` path and an explicitly `cdrom`-typed Wine drive. Prefer `D:` if free; otherwise choose a free letter without replacing user mappings.
+- Raw physical-device association remains a separate transient concern: only create/update `letter:: -> /dev/srX` when raw optical exposure is explicitly enabled and exact active-device proofs pass; never make broad raw optical access a prerequisite for ordinary CD visibility.
+- Validation must prove the drive appears automatically in Bottles/Wine on a fresh prefix, survives normal restarts, follows disc swaps through the stable `/mnt/cdemu` path, does not expose cached drives/sg devices, and leaves unrelated drive mappings untouched.
+
 ### Security gate for future DRM implementations
 
 Any legacy DRM implementation must demonstrate all of the following before merge:
@@ -315,6 +329,7 @@ Any legacy DRM implementation must demonstrate all of the following before merge
 
 0. **0.4.1 hardening/release — COMPLETE.** Stable release published and frozen baseline established.
 1. **Native legacy optical DRM compatibility/emulation — ACTIVE.** First concrete test target: Freelancer Italian retail (expected SafeDisc 2.7, exact revision to verify). Explore SafeDisc, SecuROM, LaserLock, StarForce, TAGES, ProtectCD/ProtectDISC, CD-Cops, CopyLok/CodeLok, Ring PROTECH, CD-Lock, Bitpool, DiscGuard, SmartE and other real optical families. Preserve original-media authentication; no No-CD normal path; keep optional/fail-closed without broader sandbox permissions.
+1a. **Automatic Bottles/Wine optical-drive provisioning — IMMEDIATE FOLLOW-UP AFTER FIRST DRM SUCCESS.** Fresh/first-seen prefixes should automatically receive a conflict-safe CD-ROM mapping to `/mnt/cdemu` (prefer `D:`), with explicit Wine `cdrom` type; transient `letter::` raw-device mapping only when exact raw optical exposure is enabled and validated.
 2. **Legacy DirectX compatibility layer/manager.** Optional/OFF-by-default DirectX 5–9 compatibility support after optical DRM work and before shaders.
 3. **libRashader + Slang shaders.** Optional/OFF by default per game/bottle after the compatibility foundation is stable.
 
