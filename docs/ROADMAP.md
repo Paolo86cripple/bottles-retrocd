@@ -2,37 +2,48 @@
 
 ## Released baseline: 0.4.0
 
-Bottles RetroCD **0.4.0** is released and tagged from the reviewed `main` merge commit `15b1e0acc61d61978051d49d97bd17cb97efb348`.
+Bottles RetroCD **0.4.0** is the current published baseline, tagged from reviewed `main` merge commit `15b1e0acc61d61978051d49d97bd17cb97efb348`.
 
-Completed and target-validated in 0.4.0:
+Its validated foundation includes:
 
-1. Persistent configuration/profiles — complete and target validated, including schema-2 `archive_root` persistence and dump immutability.
-2. GPU selector and strict DRM/Vulkan isolation — complete and target validated on both AMD GPU paths.
-3. Multidisc and live disc swapping — complete and target validated.
-4. Redump/TOSEC verifier and protection scanner — complete and target validated with source immutability.
-5. Retro Optical / CDEmu + libMirage lifecycle — complete and target validated.
-6. Display and preference persistence — complete and target validated: Auto, native Wayland, XWayland and isolated GSettings keyfile persistence.
-7. Standard gamepad exact-node isolation and physical hotplug — complete and target validated with `sysfs=exact`, correct initial/change udev semantics and `hidraw=hidden`.
-8. Pre-release review — **PASS**: 151 tests, CI green, real archive/sentinel/RO checks PASS, resize/scroll PASS, final XWayland Discworld Noir launch PASS with GPU + Retro Optical pre/post proof.
-9. Arch/CachyOS packaging — **COMPLETE**. Final package is `bottles-retrocd 0.4.0-3`, with tracked `.SRCINFO`, package migration metadata, clean install/upgrade, 53 files / 0 altered files, and uninstall-preservation PASS.
-10. 0.4.0 release — **COMPLETE**. PR #4 merged, post-merge `main` CI PASS, annotated tag `0.4.0` published and verified against merge commit `15b1e0acc61d61978051d49d97bd17cb97efb348`.
+- explicit archive-root persistence and dump immutability;
+- strict selected-GPU DRM/Vulkan isolation;
+- Wayland/XWayland compatibility with private-HOME preference persistence;
+- Retro Optical CDEmu/UDisks2 handling;
+- explicit multidisc/live swapping;
+- Redump/TOSEC verification and protection scanning;
+- exact-node standard gamepad isolation/hotplug;
+- native Arch/CachyOS packaging and uninstall-preservation.
 
-The released 0.4.0 baseline is now frozen except for narrowly scoped maintenance/security fixes. New compatibility features belong to post-release branches and must preserve the validated Bubblejail boundary.
+## 0.4.1 compatibility-preserving hardening
 
-## Post-release priorities
+0.4.1 is the active maintenance release line. It deliberately avoids adding a new game-compatibility stack and instead hardens the already validated architecture.
 
-1. **Native legacy optical DRM compatibility/emulation — ACTIVE NEXT OBJECTIVE.** Investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP-era optical protections; reproduce original media/protection behavior as natively as practical through Wine/CDEmu/libMirage or dedicated compatible components; study and reuse existing open-source projects when technically appropriate and license-compatible. A No-CD/cracked executable must not become the normal solution. Backends remain optional/fail-closed and must not broaden Bubblejail or optical permissions merely to work.
-2. **Legacy DirectX compatibility manager.** Evaluate/integrate DxWrapper/dgVoodoo2-style support for DirectX 5–9-era titles, optional and OFF by default. This comes after the optical-DRM objective and before shaders.
-3. **libRashader + Slang shaders.** Optional, per game/bottle and OFF by default, after the compatibility foundation is stable.
-4. **Abnormal-termination recovery for live multidisc cache devices.** Recover temporary cache devices safely after abnormal GUI/process termination without weakening ownership or mapping validation.
+Completed/target-validated work:
 
-## Post-release maintenance backlog
+1. **Verifier/scanner isolation** — dedicated non-networked bubblewrap worker; archive/app/catalog RO, hash cache only RW, private HOME/tmp, minimal dev, no host proc/sys/runtime, positive attestation and fail-closed path/layout checks.
+2. **Official DAT updater isolation** — separate networked bubblewrap worker; archive invisible, data/cache only RW, exact DNS/TLS inputs, official HTTPS allow-list, staged rebuild/integrity/rollback.
+3. **CDEmu ownership/recovery** — inter-process flock, private ownership journal, exact appended-suffix model, write-ahead cleanup and fail-closed stale recovery; normal multidisc and SIGKILL recovery validated.
+4. **Runtime surface / D-Bus hardening** — host dconf removed from the validated profile, keyfile preference persistence proven, effective proxy audit added, normal/live runtime surfaces measured, process FD/environment-name hygiene checked.
+5. **Pre-launch dconf guard** — launch now refuses a profile that re-enables `gnome_toolkit.dconf_dbus` or raw session D-Bus grants that include `ca.desrt.dconf`; active-proxy inspection remains the independent runtime proof.
+6. **Gamepad hotplug race hardening** — exact unplug/replug topology races are retried narrowly without weakening identity checks; unrelated helper failures remain hard failures.
+7. **Consolidated target regression** — Sandbox self-test, Discworld Noir non-live/live paths, verifier/update flow and Xbox One S hotplug have passed on the target CachyOS machine.
+8. **Arch/CachyOS release packaging** — metadata is 0.4.1-1. The exact final pinned artifact must pass clean build/install/integrity/uninstall-preservation before merge/release; any source-pin change invalidates evidence from an earlier candidate artifact.
 
-- Consolidate release identity constants into one shared module instead of final-wrapper overrides, only after a focused regression review.
-- Retire or remove the old direct `mutate_instance()` helper path in `gamepad_ns_helper.py` if no longer required.
-- Consider deduplicating restrictive real-sentinel staging between lifecycle and final wrapper layers.
+## Next compatibility priorities after 0.4.1
 
-These are maintenance items, not reasons to destabilize the released security-sensitive paths.
+1. **Native legacy optical DRM compatibility/emulation.** Investigate SafeDisc, SecuROM, LaserLock, StarForce and other Windows 9x/XP optical protections. Reproduce original-media verification behavior through Wine/CDEmu/libMirage or dedicated license-compatible components where feasible. A No-CD/cracked executable must not become the normal solution. Backends stay optional/fail-closed and must not broaden sandbox/optical permissions merely to work.
+2. **Legacy DirectX compatibility manager.** Evaluate/integrate DxWrapper/dgVoodoo2-style support for DirectX 5–9 titles, optional and OFF by default. This comes after optical DRM work and before shaders.
+3. **libRashader + Slang shaders.** Optional, per game/bottle and OFF by default after the compatibility foundation is stable.
+
+## Maintenance backlog
+
+- consolidate release identity constants into one shared module only after focused regression review;
+- retire/remove the old direct `mutate_instance()` helper path if it remains unused;
+- consider deduplicating restrictive real-sentinel staging between lifecycle/final-wrapper layers;
+- keep package/release evidence tied to exact immutable source pins and tags.
+
+These items must not weaken the validated Bubblejail boundary or become mandatory without a concrete reviewed reason.
 
 ## Scope reminder
 

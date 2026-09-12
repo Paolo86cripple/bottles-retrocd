@@ -1,100 +1,81 @@
 # Arch / CachyOS packaging
 
-This directory builds the Bottles RetroCD 0.4.0 package from a pinned release
-candidate commit. The 0.4.0 runtime passed the pre-packaging target-machine and
-CI gates; final release review then found and fixed an identity-only mismatch in
-the final wrapper (`org.local.BottlesRetroCD` / `0.4.0-rc2` versus the stable
-packaging identity).
+This directory builds the Bottles RetroCD **0.4.1-1** Arch/CachyOS package.
 
-The package installs only application-owned files under `/usr`. It does not
-create, rewrite or remove the user's Bubblejail `Bottles` instance, private
-HOME, RetroCD configuration, archive, DAT catalog/cache or game prefixes.
+The package payload is pinned to an exact reviewed source commit rather than to a moving branch. For the final 0.4.1 candidate the payload source is:
+
+```text
+3c842c0c5f740a041c4f2de4edcdb899691ccbd2
+```
+
+That payload contains the validated 0.4.1 runtime hardening, the final pre-launch dconf/D-Bus guard and the aligned documentation installed under `/usr/share/doc/bottles-retrocd/`.
+
+`PKGBUILD`, `.SRCINFO` and CI must always name the same payload commit. Changing that pin invalidates package-acceptance evidence from an earlier artifact and requires rebuilding/rechecking the exact new package before merge/release.
+
+The package installs only application-owned files under `/usr`. It does not create, rewrite or remove the user's Bubblejail `Bottles` instance, private HOME, RetroCD configuration, archive, DAT catalog/cache or game prefixes.
 
 ## Dependency policy
 
-Direct runtime dependencies are declared in `PKGBUILD`. `bottles` and
-`bubblejail` are AUR packages on stock Arch. CDEmu/libMirage are taken from the
-host distribution. RetroCD deliberately does not depend directly on a specific
-VHBA kernel-module package: `cdemu-daemon` and the distribution/kernel must
-provide a compatible effective `VHBA-MODULE`, which avoids duplicating CachyOS'
-kernel-provided VHBA infrastructure.
+Direct runtime dependencies are declared in `PKGBUILD`. `bottles` and `bubblejail` are AUR packages on stock Arch. CDEmu/libMirage are taken from the host distribution. RetroCD deliberately does not depend directly on a specific VHBA kernel-module package: `cdemu-daemon` and the distribution/kernel must provide a compatible effective VHBA provider, avoiding duplicate CachyOS kernel/DKMS infrastructure.
 
-`cdemu-client` is not required. `sudo` is optional and is used only by the
-interactive Componenti update action. `lspci`/`pciutils` is diagnostic
-enrichment only; GPU selection falls back safely to stable PCI identity when it
-is unavailable.
+`cdemu-client` is not required. `sudo` is optional and is used only by the interactive Componenti update action. `lspci`/`pciutils` is diagnostic enrichment only.
 
-The final 0.4.0 Arch/CachyOS candidate is `pkgrel=3`. It conflicts with and
-replaces the historical local package name `bottles-retro-cd-gui`, so an
-upgrade does not leave two launchers installed.
+The package intentionally declares:
+
+```text
+conflicts = bottles-retro-cd-gui
+replaces  = bottles-retro-cd-gui
+```
+
+so the obsolete historical local package name does not coexist with the stable launcher.
 
 ## Build on the target system
 
 Commands shown here are fish-compatible:
 
 ```fish
-git switch packaging/arch-cachyos-0.4.0
+git fetch origin
+git switch hardening/0.4.1-runtime-audit
 git pull --ff-only
 cd packaging/arch
 
 makepkg --cleanbuild --syncdeps
 ```
 
-If `bottles` or `bubblejail` are not already installed, install those AUR
-dependencies with your chosen AUR helper before running `makepkg`.
+If `bottles` or `bubblejail` are not already installed, install those AUR dependencies with the chosen AUR helper before running `makepkg`.
 
 After a successful build, inspect the package before installation:
 
 ```fish
-set PKG (find . -maxdepth 1 -type f -name 'bottles-retrocd-0.4.0-3-*.pkg.tar.*' | head -n 1)
+set PKG (find . -maxdepth 1 -type f -name 'bottles-retrocd-0.4.1-1-*.pkg.tar.*' | head -n 1)
 test -n "$PKG"; or begin; echo "Pacchetto non trovato"; exit 1; end
 
 pacman -Qlp "$PKG"
 pacman -Qip "$PKG"
 ```
 
-`.SRCINFO` is tracked alongside `PKGBUILD` and must be regenerated whenever
-package metadata changes:
+`.SRCINFO` is tracked alongside `PKGBUILD` and must be regenerated whenever package metadata or the source pin changes:
 
 ```fish
 makepkg --printsrcinfo > .SRCINFO
 ```
 
-## 0.4.0 package acceptance
+## Final 0.4.1 artifact gate
 
-The full target-machine package acceptance completed successfully for
-`0.4.0-2` on CachyOS on 2026-09-10:
+The exact artifact built from payload commit `3c842c0c5f740a041c4f2de4edcdb899691ccbd2` is the remaining package acceptance target.
 
-- clean `makepkg` build completed with 151/151 tests passing;
-- package metadata and file list were inspected before installation;
-- package payload was limited to the expected `/usr` locations;
-- installed package integrity reported 53 files and 0 altered files;
-- Bubblejail test passed 17/17 with no failures or warnings;
-- installed launch passed GPU pre/post isolation, Retro Optical pre/post,
-  XWayland, network OFF and exact Xbox One S gamepad isolation;
-- Discworld Noir launched through the installed package using the validated
-  Retro Optical path;
-- uninstall-preservation comparison showed configuration, Bubblejail state,
-  prefixes and archive content unchanged.
+Required acceptance:
 
-Final release review then found that the final GUI wrapper inherited legacy
-base constants `APP_ID=org.local.BottlesRetroCD`, `APP_NAME=Bottles Retro CD`
-and `VERSION=0.4.0-rc2`. The final wrapper now overrides only those three
-release-identity values to `io.github.Paolo86cripple.BottlesRetroCD`,
-`Bottles RetroCD` and `0.4.0`; sandbox/device/runtime policy is unchanged.
-Because package content changed, `pkgrel` was incremented to 3 and the package
-source pin moved to the identity-fix commit.
+- clean `makepkg --cleanbuild --syncdeps` succeeds with the complete test suite;
+- package metadata/file list are inspected and package-owned paths remain under the intended `/usr` locations;
+- install/upgrade or reinstall of the exact `0.4.1-1` artifact succeeds;
+- `pacman -Qkk bottles-retrocd` reports zero altered files;
+- one installed-package normal launch still passes the static dconf guard plus existing GPU/Retro Optical proofs;
+- removal deletes package-owned `/usr` payload only;
+- RetroCD configuration, Bubblejail instance/private HOME, prefixes, archive and verifier state remain unchanged across uninstall/reinstall.
 
-The narrow reopened `0.4.0-3` gate also passed on the target CachyOS system:
+An earlier 0.4.1-1 candidate passed the preservation/integrity path with **65 package files / 0 altered files**, but the later pre-launch dconf guard and documentation alignment changed the payload source. That earlier artifact is useful regression evidence but is not the final merge/release artifact.
 
-- clean `makepkg --cleanbuild --syncdeps` completed with 151/151 tests passing;
-- upgrade from `0.4.0-2` to `0.4.0-3` completed successfully;
-- pacman reported the expected version/conflicts/replaces metadata;
-- `pacman -Qkk bottles-retrocd` reported 53 files and 0 altered files;
-- the effective D-Bus/GTK application ID was verified as
-  `io.github.Paolo86cripple.BottlesRetroCD`;
-- the stable GUI identity is `Bottles RetroCD 0.4.0`.
+## Historical 0.4.0 baseline
 
-The earlier GPU/Retro Optical/Discworld/gamepad/uninstall-preservation suite did
-not need to be repeated because the only runtime delta was the reviewed
-release-identity override.
+The published 0.4.0 package remains `bottles-retrocd 0.4.0-3`. Its target acceptance passed with 151/151 tests, 53 files / 0 altered files, stable application identity, GPU/Retro Optical/Discworld/gamepad validation and uninstall preservation. The published 0.4.0 tag/package history is immutable and must not be rewritten while preparing 0.4.1.

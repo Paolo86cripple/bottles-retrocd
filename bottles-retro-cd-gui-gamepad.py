@@ -20,7 +20,7 @@ from gamepad_hotplug import GamepadHotplugMonitor  # noqa: E402
 
 
 class Window(_life.Window):
-    """Final 0.4.0 wrapper adding narrow Bubblejail gamepad management."""
+    """Final 0.4.1 wrapper adding narrow Bubblejail gamepad management."""
 
     def __init__(self, app):
         super().__init__(app)
@@ -270,7 +270,7 @@ class Window(_life.Window):
 _release_base = _life._ext._base
 _release_base.APP_ID = "io.github.Paolo86cripple.BottlesRetroCD"
 _release_base.APP_NAME = "Bottles RetroCD"
-_release_base.VERSION = "0.4.0"
+_release_base.VERSION = "0.4.1"
 _release_base.Window = Window
 App = _life.App
 

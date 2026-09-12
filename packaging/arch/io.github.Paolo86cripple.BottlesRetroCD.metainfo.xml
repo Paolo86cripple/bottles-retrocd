@@ -13,9 +13,9 @@
       verification workflows.
     </p>
     <p>
-      The 0.4.0 release uses deny-by-default host exposure, transient networking,
-      strict selected-GPU isolation, verified read-only optical mounts and
-      exact-node standard gamepad handling.
+      The 0.4.1 release hardens verifier/updater isolation, CDEmu ownership and
+      crash recovery, effective D-Bus/runtime exposure and exact-node gamepad
+      hotplug while preserving the validated game compatibility boundary.
     </p>
   </description>
   <launchable type="desktop-id">io.github.Paolo86cripple.BottlesRetroCD.desktop</launchable>
@@ -25,6 +25,7 @@
   <url type="homepage">https://github.com/Paolo86cripple/bottles-retrocd</url>
   <url type="bugtracker">https://github.com/Paolo86cripple/bottles-retrocd/issues</url>
   <releases>
+    <release version="0.4.1" date="2026-09-11"/>
     <release version="0.4.0" date="2026-09-10"/>
   </releases>
 </component>

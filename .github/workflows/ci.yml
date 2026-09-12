@@ -19,9 +19,12 @@ jobs:
           bottles-retro-cd-gui-base.py
           bottles-retro-cd-gui-lifecycle.py
           bottles-retro-cd-gui-gamepad.py
+          bottles-retro-cd-gui-hardening.py
+          bottles-retro-cd-gui-runtime-audit.py
           cdemu_backend.py
           cdemu_lifecycle.py
           cdemu_lifecycle_cli.py
+          cdemu_ownership.py
           cdemu_update_cli.py
           disc_bridge.py
           disc_sets_backend.py
@@ -34,6 +37,10 @@ jobs:
           multidisc_backend.py
           protection_scanner.py
           retro_optical.py
+          runtime_bus_audit.py
+          runtime_proxy_policy.py
+          runtime_sandbox_test_policy.py
+          runtime_surface_audit.py
           sandbox_backend.py
           settings_backend.py
           verifier_backend.py
@@ -41,7 +48,11 @@ jobs:
           verifier_cli.py
           verifier_common.py
           verifier_hash.py
+          verifier_sandbox.py
+          verifier_updater_sandbox.py
+          verifier_updater_worker.py
           verifier_updates.py
+          verifier_worker.py
       - name: Unit tests
         env:
           PYTHONWARNINGS: error::ResourceWarning
@@ -77,20 +88,30 @@ jobs:
               raise SystemExit('unexpected AppStream component id')
           if component.findtext('project_license') != 'GPL-3.0-or-later':
               raise SystemExit('unexpected project license')
+          releases = component.find('releases')
+          if releases is None or not any(
+              release.get('version') == '0.4.1' and release.get('date') == '2026-09-11'
+              for release in releases.findall('release')
+          ):
+              raise SystemExit('missing AppStream 0.4.1 release entry')
 
           final_entry = Path('bottles-retro-cd-gui-gamepad.py').read_text(encoding='utf-8')
           for required in (
               '_release_base.APP_ID = "io.github.Paolo86cripple.BottlesRetroCD"',
               '_release_base.APP_NAME = "Bottles RetroCD"',
-              '_release_base.VERSION = "0.4.0"',
+              '_release_base.VERSION = "0.4.1"',
           ):
               if required not in final_entry:
                   raise SystemExit(f'missing final release identity: {required}')
 
+          local_entry = Path('run-local.sh').read_text(encoding='utf-8')
+          if 'bottles-retro-cd-gui-runtime-audit.py' not in local_entry:
+              raise SystemExit('run-local.sh does not use the current hardening runtime-audit entrypoint')
+
           expected = {
               'bottles-retrocd-launcher': '0ea1cd6d1a8ecf4ce90e97ac67ec1fe629c579bcfb8000f8d0be7d0433a05c39',
               'io.github.Paolo86cripple.BottlesRetroCD.desktop': 'a1076b9bab5d8279e24f397a05e45094b004c791d5aa118d3ac38c84995c872f',
-              'io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml': 'c6c8a1619bfc4cb150b41aa6574d12c9f5572b917edea03161ca023f6c29a4c0',
+              'io.github.Paolo86cripple.BottlesRetroCD.metainfo.xml': 'c6a77ed574b5bda87dcf20af6c3ae1f27f000de43a0f82e6cc4e4a49d621f8ab',
           }
           for name, digest in expected.items():
               actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
@@ -99,11 +120,11 @@ jobs:
 
           srcinfo = (root / '.SRCINFO').read_text(encoding='utf-8')
           for required in (
-              '\tpkgver = 0.4.0',
-              '\tpkgrel = 3',
+              '\tpkgver = 0.4.1',
+              '\tpkgrel = 1',
               '\tconflicts = bottles-retro-cd-gui',
               '\treplaces = bottles-retro-cd-gui',
-              '\tsource = bottles-retrocd::git+https://github.com/Paolo86cripple/bottles-retrocd.git#commit=122460692d0c19650d663a77288b1c489851cd44',
+              '\tsource = bottles-retrocd::git+https://github.com/Paolo86cripple/bottles-retrocd.git#commit=3c842c0c5f740a041c4f2de4edcdb899691ccbd2',
           ):
               if required not in srcinfo:
                   raise SystemExit(f'missing .SRCINFO metadata: {required}')

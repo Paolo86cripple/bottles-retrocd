@@ -130,6 +130,64 @@ class GamepadHotplugTests(unittest.TestCase):
         self.assertNotIn("--remove", args)
         self.assertIn("--bind", args)
 
+    def test_disappearing_host_node_is_retryable_topology_race(self):
+        device = GamepadDevice(
+            name="Xbox",
+            js_node="/dev/input/js0",
+            event_nodes=("/dev/input/event9",),
+        )
+        before = GamepadProbe(
+            input_dir_visible=True,
+            nodes={},
+            hidraw_nodes=(),
+        )
+        proc = SimpleNamespace(
+            returncode=1,
+            stdout=(
+                "RuntimeError: Nodo gamepad host non disponibile: /dev/input/event9: "
+                "[Errno 2] No such file or directory\n"
+            ),
+        )
+        with (
+            mock.patch.object(hotplug.SandboxBackend, "running", return_value=True),
+            mock.patch.object(hotplug, "detect_host_gamepads", return_value=(device,)),
+            mock.patch.object(hotplug, "attached_probe", return_value=before),
+            mock.patch.object(hotplug.Path, "is_file", return_value=True),
+            mock.patch.object(hotplug.subprocess, "run", return_value=proc),
+        ):
+            with self.assertRaises(hotplug.GamepadTopologyRace):
+                hotplug.reconcile_gamepads("Bottles")
+
+    def test_unrelated_helper_failure_remains_hard_failure(self):
+        device = GamepadDevice(
+            name="Xbox",
+            js_node="/dev/input/js0",
+            event_nodes=("/dev/input/event9",),
+        )
+        before = GamepadProbe(
+            input_dir_visible=True,
+            nodes={},
+            hidraw_nodes=(),
+        )
+        proc = SimpleNamespace(returncode=1, stdout="permission denied\n")
+        with (
+            mock.patch.object(hotplug.SandboxBackend, "running", return_value=True),
+            mock.patch.object(hotplug, "detect_host_gamepads", return_value=(device,)),
+            mock.patch.object(hotplug, "attached_probe", return_value=before),
+            mock.patch.object(hotplug.Path, "is_file", return_value=True),
+            mock.patch.object(hotplug.subprocess, "run", return_value=proc),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Helper namespace gamepad fallito"):
+                hotplug.reconcile_gamepads("Bottles")
+
+    def test_transient_classifier_is_narrow(self):
+        self.assertTrue(
+            hotplug._transient_topology_failure(
+                "Risorsa host cambiata durante la riconciliazione hotplug: /dev/input/js0"
+            )
+        )
+        self.assertFalse(hotplug._transient_topology_failure("permission denied"))
+
     def test_udev_packet_has_libudev_header_and_exact_properties(self):
         packet = ns_helper._udev_packet(
             {

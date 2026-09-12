@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.4.1
+
+Compatibility-preserving hardening release for the validated 0.4.0 runtime architecture.
+
+### Verifier / updater isolation
+
+- moved archive verification and protection scanning into a dedicated bubblewrap worker with archive/app/catalog read-only, only the hash cache writable, private HOME/tmp, loopback-only networking and no host `/proc`, `/sys` or runtime state;
+- added positive verifier sandbox attestation and fail-closed path/layout checks;
+- moved official Redump/TOSEC downloads into a separate networked bubblewrap worker with the game archive invisible, exact DNS/TLS host inputs, HTTPS allow-lists, staged rebuild, integrity checks and rollback;
+- target validation on Discworld Noir Disc 1 remained Redump `MATCH 1:1` before and after an official Redump update; the 2026-09-11 update rebuilt the catalog to 61118 games / 199470 ROM records;
+- protection scanning remained direct/raw and read-only with no mount or execution.
+
+### CDEmu / multidisc ownership hardening
+
+- added an inter-process CDEmu operation lock and private ownership journal under XDG state;
+- journal records boot/daemon identity, owner PID/start time, base device count, exact expected media/mappings and write-ahead removal state;
+- stale recovery removes only the exact owned contiguous appended suffix after revalidating mapping, rdev, media and RO mount evidence; ambiguity or external activity fails closed;
+- normal 3-disc cache/swap/cleanup and SIGKILL recovery were physically validated;
+- consolidated the non-live launch lock fix into the hardening wrapper, removing the temporary runtime-audit shim.
+
+### Runtime surface / D-Bus hardening
+
+- added read-only runtime auditing for session/system D-Bus names, UNIX sockets, runtime paths, device nodes and effective xdg-dbus-proxy policy;
+- verified Bubblejail 0.10.4 uses `[gnome_toolkit] dconf_dbus`; the validated profile requires it disabled;
+- Bottles settings persist through `GSETTINGS_BACKEND=keyfile`, so host `ca.desrt.dconf` access was removed without losing preferences;
+- added a fail-closed pre-launch profile guard that rejects `gnome_toolkit.dconf_dbus=true` and raw session D-Bus talk/own/call grants whose exact or `.*` name policy includes `ca.desrt.dconf`;
+- effective session/system buses expose only `org.freedesktop.DBus` in the validated baseline, while the proxy remains filtered with no dconf talk/call/own grants;
+- runtime proxy checks fail closed if dconf grants, ambiguous proxy state or missing filtering reappear;
+- process/FD and environment-name scans found no sensitive inherited descriptors or known secret variables in the reviewed classes.
+
+### Gamepad hotplug
+
+- retained exact-node `jsX` + matching `eventX` isolation, minimal sysfs recreation, hidden hidraw and libudev notifications for physical disconnect/reconnect;
+- fixed a real unplug/replug race where sysfs could briefly reference an `eventX` node already removed from `/dev/input`;
+- the namespace helper remains fail-closed on changed/missing device identity; only those exact transient topology errors are retried by the monitor on the next poll;
+- target validation passed initial Xbox One S exposure, physical disconnect to an empty exact surface and reconnect with `sysfs=exact`, `udev=notified` and `hidraw=hidden`, with no intermediate false failure after the fix.
+
+### Validation
+
+- consolidated Bubblejail self-test: `PASS=17 FAIL=0 WARN=0`, including dconf blocked as the expected secure state;
+- Discworld Noir non-live path: dedicated RX 9070 XT, XWayland, network OFF, raw `/dev/srX` OFF, `/dev/sgX` hidden and `/mnt/cdemu=RO`, with GPU and Retro Optical pre/post proofs PASS;
+- live multidisc 3/3 kept exactly one active `/dev/sr0`, hid cached drives and `/dev/sgX`, preserved the same runtime D-Bus/socket surface across Disc 1 → Disc 2 and cleaned CDEmu cache automatically;
+- verifier sandbox, pre-update verify+scanner, official Redump update and post-update verify+scanner all PASS on the target machine;
+- Xbox One S exact-node initial/disconnect/reconnect passed after the narrow topology-race fix;
+- package acceptance is tied to the exact source commit pinned by `PKGBUILD`/`.SRCINFO`; a source-pin change requires rebuilding and rechecking the final artifact before merge/release.
+
 ## 0.4.0
 
 First stable Bottles RetroCD release, published on 2026-09-10.
@@ -28,7 +74,7 @@ Official Arch/CachyOS binary package: `bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zs
 - manual **Test Vulkan** uses the same validator;
 - added persistent display policy: Auto / native Wayland / XWayland;
 - XWayland keeps the Bottles GTK UI free to use Wayland while Wine/Proton uses the X11/XWayland path, without adding filesystem/network/GPU/optical permissions;
-- forced display backends validate the existing Bubblejail display services instead of silently modifying the profile;
+- forced display backends validate the existing Bubblejail `x11` + `wayland` services instead of silently modifying the profile;
 - Bottles global GSettings use the isolated `keyfile` backend so dark mode, temp/cache preferences and similar settings persist inside the private Bubblejail HOME;
 - the Sandbox page is vertically scrollable so all release controls remain reachable on smaller windows;
 - added a stable application ID: `io.github.Paolo86cripple.BottlesRetroCD`.
@@ -40,7 +86,7 @@ Official Arch/CachyOS binary package: `bottles-retrocd-0.4.0-3-x86_64.pkg.tar.zs
 - added a Sandbox gamepad status/toggle and dedicated hotplug status reporting;
 - after Bottles launch, RetroCD monitors only supported controller-node identity and keeps the already-running jail synchronized on physical add/remove/reconnect;
 - dynamic reconciliation passes only validated gamepad device FDs, recreates the matching minimal sysfs subtree and re-probes the jail after each change;
-- initial activation is non-destructive and reports `udev=initial-static` because Wine starts with the existing static Bubblejail joystick surface;
+- initial activation is non-destructive and reports `udev=initial-static` because Wine starts with the already-present static Bubblejail joystick surface;
 - actual disconnect/reconnect emits matching libudev remove/add notifications inside Bubblejail's network namespace for Wine/winebus and reports `udev=notified`;
 - the namespace broker discovers the user namespace that owns Bubblejail's mount namespace with Linux `NS_GET_USERNS`, stages detached exact-node mounts in a private mount namespace, revalidates pinned device/sysfs identity, then enters the active mount/network namespaces;
 - node numbering is not assumed stable across reconnect; the accepted surface is always compared with the current host-detected controller nodes;
